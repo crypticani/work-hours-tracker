@@ -3,322 +3,175 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Weekly Work Hours Tracker (HH:MM)</title>
-  <!-- Tailwind via CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <title>Work Hours Tracker — Flexible Weekly Calculator</title>
+  <meta name="description" content="A configurable work-hours calculator that supports any company policy — track worked hours, holidays, half-days and get your exact logout time." />
+
+  <!-- Preconnect for faster font load -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+  <link rel="stylesheet" href="styles.css" />
 </head>
-<body class="bg-gray-50 text-gray-900">
-  <div class="max-w-3xl mx-auto p-6">
-    <header class="mb-6">
-      <h1 class="text-2xl font-semibold tracking-tight">Weekly Work Hours Tracker</h1>
-      <p class="text-sm text-gray-600 mt-1">
-        Enter daily time in <strong>HH:MM</strong>. Defaults to <strong>5 days</strong> and <strong>45 hours</strong>, both editable.
-      </p>
+<body>
+
+  <div class="app-wrapper">
+
+    <!-- ── Header ───────────────────────────────────────────── -->
+    <header class="app-header">
+      <div>
+        <h1 class="app-title">
+          <span class="app-title-icon">⏱️</span>
+          Work Hours Tracker
+        </h1>
+        <p class="app-subtitle">Flexible weekly calculator · supports any company policy</p>
+      </div>
+
+      <div class="header-actions">
+        <button id="btn-reset-week" class="btn btn-danger" title="Clear all week entries">
+          🔄 Reset Week
+        </button>
+        <button id="btn-theme-toggle" class="btn btn-ghost btn-icon" title="Switch to light mode">
+          🌙
+        </button>
+      </div>
     </header>
 
-    <!-- Config Card -->
-    <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
-        <div>
-          <label for="totalDays" class="block text-sm font-medium text-gray-700">Target Days</label>
-          <input id="totalDays" type="number" min="1" max="14" value="5"
-                 class="mt-1 w-full rounded-lg border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-          <p class="text-xs text-gray-500 mt-1">How many working days this week.</p>
+    <!-- ── Config Card ──────────────────────────────────────── -->
+    <section class="card" aria-labelledby="config-title">
+      <h2 class="section-title" id="config-title">Company Policy</h2>
+
+      <!-- Preset chips -->
+      <div id="preset-bar" class="preset-bar" role="group" aria-label="Policy presets"></div>
+
+      <div class="divider"></div>
+
+      <!-- Manual config -->
+      <div class="config-panel">
+
+        <div class="form-group">
+          <label for="cfg-total-hours">Weekly target (hours)</label>
+          <input id="cfg-total-hours" type="number" min="1" max="200" step="0.5"
+                 aria-label="Total weekly target hours" />
+          <span class="hint-text">e.g. 45 for a 5-day week</span>
         </div>
 
-        <div>
-          <label for="targetHours" class="block text-sm font-medium text-gray-700">Target Hours (HH totals use this)</label>
-          <input id="targetHours" type="number" min="0" value="45"
-                 class="mt-1 w-full rounded-lg border-gray-300 focus:border-indigo-500 focus:ring-indigo-500">
-          <p class="text-xs text-gray-500 mt-1">Total target in hours (e.g., 45).</p>
+        <div class="form-group">
+          <label for="cfg-daily-hours">Daily work hours</label>
+          <input id="cfg-daily-hours" type="number" min="1" max="24" step="0.5"
+                 aria-label="Daily work hours" />
+          <span class="hint-text">Credit given for holidays</span>
         </div>
 
-        <div class="flex gap-2">
-          <button id="clearEntriesBtn"
-                  class="h-10 mt-6 px-3 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition">
-            Clear Entries
-          </button>
-          <button id="resetAllBtn"
-                  class="h-10 mt-6 px-3 rounded-lg bg-gray-100 text-gray-800 hover:bg-gray-200 transition">
-            Reset All
-          </button>
+        <div class="form-group">
+          <label for="cfg-half-day">Half-day hours</label>
+          <input id="cfg-half-day" type="number" min="0.5" max="12" step="0.5"
+                 aria-label="Half day credit hours" />
+          <span class="hint-text">Credit given for half-days</span>
         </div>
+
+        <div class="form-group config-row-full">
+          <label>Working days this week</label>
+          <div id="cfg-working-days" class="preset-bar" role="group" aria-label="Working days selection"
+               style="gap: 8px; flex-wrap: wrap; margin-top: 4px;"></div>
+          <style>
+            .day-check-label {
+              display: inline-flex;
+              align-items: center;
+              gap: 5px;
+              font-size: 0.8125rem;
+              font-weight: 500;
+              color: var(--text-secondary);
+              cursor: pointer;
+              padding: 5px 12px;
+              border: 1px solid var(--border-subtle);
+              border-radius: 100px;
+              transition: all var(--transition, 0.18s ease);
+              user-select: none;
+            }
+            .day-check-label input[type="checkbox"] { display: none; }
+            .day-check-label:has(input:checked) {
+              background: var(--accent-blue-bg);
+              color: var(--accent-blue);
+              border-color: rgba(88,166,255,0.3);
+            }
+            .day-check-label:hover { background: var(--bg-hover); color: var(--text-primary); }
+          </style>
+        </div>
+
       </div>
     </section>
 
-    <!-- Days Grid -->
-    <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
-      <h2 class="text-lg font-medium mb-4">Daily Entries (HH:MM)</h2>
-      <div id="daysGrid" class="grid grid-cols-1 sm:grid-cols-2 gap-4"></div>
+    <!-- ── Days Grid ─────────────────────────────────────────── -->
+    <section class="card" aria-labelledby="days-title">
+      <h2 class="section-title" id="days-title">This Week</h2>
+      <div id="days-grid" class="days-grid"></div>
     </section>
 
-    <!-- Summary -->
-    <section class="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-      <h2 class="text-lg font-medium mb-4">Summary</h2>
+    <!-- ── Summary ──────────────────────────────────────────── -->
+    <section class="card" aria-labelledby="summary-title">
+      <h2 class="section-title" id="summary-title">Summary</h2>
 
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div class="p-3 rounded-lg bg-blue-50 border border-blue-100">
-          <div class="text-xs font-medium text-blue-800">Total Logged</div>
-          <div id="totalLogged" class="text-xl font-semibold text-blue-900 mt-1">00:00</div>
-          <div id="totalLoggedHM" class="text-xs text-blue-700">= 0.00 hours</div>
+      <div class="summary-grid">
+
+        <!-- Completed -->
+        <div class="summary-card summary-card-blue">
+          <div class="summary-label">Completed</div>
+          <div id="stat-completed" class="summary-value">0h</div>
+          <div id="stat-completed-sub" class="summary-sub">of 0h target</div>
         </div>
 
-        <div class="p-3 rounded-lg border" id="remainingCard">
-          <div class="text-xs font-medium" id="remainingLabel">Remaining</div>
-          <div id="remainingTime" class="text-xl font-semibold mt-1">45:00</div>
-          <div id="remainingHM" class="text-xs">to target</div>
+        <!-- Remaining -->
+        <div class="summary-card summary-card-amber">
+          <div class="summary-label">Remaining</div>
+          <div id="stat-remaining" class="summary-value">—</div>
+          <div id="stat-remaining-sub" class="summary-sub">still to go</div>
         </div>
 
-        <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-100">
-          <div class="text-xs font-medium text-emerald-800">Required Avg / Remaining Day</div>
-          <div id="requiredAvg" class="text-xl font-semibold text-emerald-900 mt-1">–</div>
-          <div id="daysLeft" class="text-xs text-emerald-700">–</div>
+        <!-- Required avg -->
+        <div class="summary-card summary-card-green">
+          <div class="summary-label">Avg / Pending Day</div>
+          <div id="stat-avg" class="summary-value">—</div>
+          <div id="stat-avg-sub" class="summary-sub">–</div>
+        </div>
+
+      </div>
+
+      <!-- Progress bar -->
+      <div class="progress-wrap">
+        <div class="progress-labels">
+          <span id="progress-pct">0%</span>
+          <span>Target: <strong id="progress-target">—</strong></span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-fill" class="progress-fill" style="width: 0%;" role="progressbar"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
         </div>
       </div>
+
+      <!-- Logout time banner (shown only when in-progress day exists) -->
+      <div id="logout-banner" class="logout-banner" role="status" aria-live="polite">
+        <div id="logout-icon" class="logout-banner-icon">🕐</div>
+        <div class="logout-banner-text">
+          <div id="logout-label" class="label">Logout Time</div>
+          <div id="logout-time" class="logout-banner-time">—</div>
+          <div id="logout-sub" class="logout-banner-sub">—</div>
+        </div>
+      </div>
+
     </section>
 
-    <footer class="mt-8 text-xs text-gray-500">
-      Tip: You can type flexible formats like <code>9</code>, <code>9:</code>, <code>9:5</code>, <code>09:75</code> → they normalize to valid <strong>HH:MM</strong>.
-      Data is saved locally in this browser.
+    <!-- ── Footer ────────────────────────────────────────────── -->
+    <footer class="app-footer">
+      Enter hours as <code>9</code>, <code>8:30</code>, or <code>9.5</code> · Data saved in your browser
     </footer>
-  </div>
 
-  <script>
-    // ---- State & Persistence ----
-    const LS_KEY = 'workhours_app_v2_hhmm';
+  </div><!-- /app-wrapper -->
 
-    const state = {
-      totalDays: 5,
-      targetMinutes: 45 * 60, // store minutes internally
-      entries: []             // array of minutes per day
-    };
-
-    function save() {
-      localStorage.setItem(LS_KEY, JSON.stringify(state));
-    }
-
-    function load() {
-      try {
-        const raw = localStorage.getItem(LS_KEY);
-        if (!raw) return;
-        const parsed = JSON.parse(raw);
-        if (typeof parsed.totalDays === 'number') state.totalDays = parsed.totalDays;
-        if (typeof parsed.targetMinutes === 'number') state.targetMinutes = parsed.targetMinutes;
-        if (Array.isArray(parsed.entries)) state.entries = parsed.entries.map(v => Math.max(0, Number(v) || 0));
-      } catch { /* ignore */ }
-    }
-
-    // ---- Utils ----
-    const clampInt = (n, min = 0, max = Number.MAX_SAFE_INTEGER) => {
-      n = parseInt(n, 10);
-      if (isNaN(n)) n = 0;
-      return Math.min(max, Math.max(min, n));
-    };
-
-    const pad2 = (n) => String(n).padStart(2, '0');
-
-    function formatHHMM(mins) {
-      const sign = mins < 0 ? '-' : '';
-      mins = Math.abs(mins);
-      const h = Math.floor(mins / 60);
-      const m = mins % 60;
-      return `${sign}${pad2(h)}:${pad2(m)}`;
-    }
-
-    // Parse flexible HH:MM (or H, H:, H:M, HH:MM, HH:MM:ss ignored)
-    function parseFlexibleHHMM(str) {
-      if (!str || typeof str !== 'string') return 0;
-      str = str.trim();
-
-      // If only digits like "9" treat as hours
-      if (/^\d+$/.test(str)) {
-        const h = clampInt(str, 0);
-        return h * 60;
-      }
-
-      // If has colon, split; ignore seconds if provided
-      if (str.includes(':')) {
-        const parts = str.split(':').map(s => s.trim());
-        let h = clampInt(parts[0] || '0', 0);
-        let m = clampInt(parts[1] || '0', 0);
-        // normalize minutes overflow
-        if (m >= 60) {
-          h += Math.floor(m / 60);
-          m = m % 60;
-        }
-        return (h * 60) + m;
-      }
-
-      // Fallback
-      return 0;
-    }
-
-    function countDaysLeft() {
-      return state.entries.filter(v => v === 0).length;
-    }
-
-    // ---- Rendering ----
-    const totalDaysInput   = document.getElementById('totalDays');
-    const targetHoursInput = document.getElementById('targetHours');
-    const daysGrid         = document.getElementById('daysGrid');
-
-    const totalLoggedEl  = document.getElementById('totalLogged');
-    const totalLoggedHM  = document.getElementById('totalLoggedHM');
-    const remainingCard  = document.getElementById('remainingCard');
-    const remainingLabel = document.getElementById('remainingLabel');
-    const remainingTime  = document.getElementById('remainingTime');
-    const remainingHM    = document.getElementById('remainingHM');
-    const requiredAvg    = document.getElementById('requiredAvg');
-    const daysLeftEl     = document.getElementById('daysLeft');
-
-    const clearEntriesBtn = document.getElementById('clearEntriesBtn');
-    const resetAllBtn     = document.getElementById('resetAllBtn');
-
-    function ensureEntriesLength() {
-      const n = state.totalDays;
-      if (state.entries.length < n) {
-        while (state.entries.length < n) state.entries.push(0);
-      } else if (state.entries.length > n) {
-        state.entries = state.entries.slice(0, n);
-      }
-    }
-
-    function makeDayRow(index, minutesValue) {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'border border-gray-200 rounded-lg p-3';
-
-      const label = document.createElement('div');
-      label.className = 'text-sm font-medium text-gray-700 mb-2';
-      label.textContent = `Day ${index + 1}`;
-      wrapper.appendChild(label);
-
-      // Input (HH:MM)
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.inputMode = 'numeric';
-      input.placeholder = 'HH:MM';
-      input.value = formatHHMM(minutesValue);
-      input.className = 'w-full rounded-lg border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 px-3 py-2 font-mono';
-      input.setAttribute('aria-label', `Day ${index + 1} time in HH:MM`);
-
-      function normalizeAndSync(fromBlur = false) {
-        let mins = parseFlexibleHHMM(input.value);
-        // On blur, rewrite to canonical HH:MM with zero padding
-        if (fromBlur) {
-          input.value = formatHHMM(mins);
-        }
-        state.entries[index] = mins;
-        updateSummary();
-        save();
-      }
-
-      input.addEventListener('input', () => normalizeAndSync(false));
-      input.addEventListener('blur',  () => normalizeAndSync(true));
-
-      wrapper.appendChild(input);
-      return wrapper;
-    }
-
-    function renderDays() {
-      ensureEntriesLength();
-      daysGrid.innerHTML = '';
-      state.entries.forEach((mins, idx) => {
-        daysGrid.appendChild(makeDayRow(idx, mins));
-      });
-    }
-
-    function updateSummary() {
-      const logged = state.entries.reduce((a, b) => a + b, 0);
-      const target = state.targetMinutes;
-      const remaining = target - logged;
-
-      // Total logged
-      totalLoggedEl.textContent = formatHHMM(logged);
-      totalLoggedHM.textContent = `= ${(logged / 60).toFixed(2)} hours`;
-
-      // Remaining/Surplus styling & labels
-      const isSurplus = remaining < 0;
-      remainingTime.textContent = formatHHMM(remaining);
-      remainingHM.textContent = isSurplus ? 'surplus over target' : 'to target';
-      remainingLabel.textContent = isSurplus ? 'Surplus' : 'Remaining';
-
-      // Color the card
-      if (isSurplus) {
-        remainingCard.className = 'p-3 rounded-lg bg-indigo-50 border border-indigo-200';
-        remainingLabel.className = 'text-xs font-medium text-indigo-800';
-        remainingTime.className = 'text-xl font-semibold mt-1 text-indigo-900';
-        remainingHM.className = 'text-xs text-indigo-700';
-      } else if (remaining === 0) {
-        remainingCard.className = 'p-3 rounded-lg bg-emerald-50 border border-emerald-200';
-        remainingLabel.className = 'text-xs font-medium text-emerald-800';
-        remainingTime.className = 'text-xl font-semibold mt-1 text-emerald-900';
-        remainingHM.className = 'text-xs text-emerald-700';
-      } else {
-        remainingCard.className = 'p-3 rounded-lg bg-amber-50 border border-amber-200';
-        remainingLabel.className = 'text-xs font-medium text-amber-800';
-        remainingTime.className = 'text-xl font-semibold mt-1 text-amber-900';
-        remainingHM.className = 'text-xs text-amber-700';
-      }
-
-      // Required avg for remaining days (only when remaining > 0 and there are zero-filled days left)
-      const daysLeft = countDaysLeft();
-      if (remaining > 0 && daysLeft > 0) {
-        const avg = Math.ceil(remaining / daysLeft); // in minutes, rounded up
-        requiredAvg.textContent = formatHHMM(avg);
-        daysLeftEl.textContent = `${daysLeft} day(s) left`;
-      } else if (remaining > 0 && daysLeft === 0) {
-        requiredAvg.textContent = '–';
-        daysLeftEl.textContent = 'No days left';
-      } else {
-        requiredAvg.textContent = 'Done';
-        daysLeftEl.textContent = '—';
-      }
-    }
-
-    // ---- Event Wiring ----
-    totalDaysInput.addEventListener('input', () => {
-      const v = clampInt(totalDaysInput.value, 1, 14);
-      state.totalDays = v;
-      ensureEntriesLength();
-      renderDays();
-      updateSummary();
-      save();
-    });
-
-    targetHoursInput.addEventListener('input', () => {
-      const v = clampInt(targetHoursInput.value, 0, 200);
-      state.targetMinutes = v * 60;
-      updateSummary();
-      save();
-    });
-
-    clearEntriesBtn.addEventListener('click', () => {
-      state.entries = state.entries.map(() => 0);
-      renderDays();
-      updateSummary();
-      save();
-    });
-
-    resetAllBtn.addEventListener('click', () => {
-      state.totalDays = 5;
-      state.targetMinutes = 45 * 60;
-      state.entries = Array.from({ length: 5 }, () => 0);
-      totalDaysInput.value = 5;
-      targetHoursInput.value = 45;
-      renderDays();
-      updateSummary();
-      save();
-    });
-
-    // ---- Init ----
-    (function init() {
-      load();
-      totalDaysInput.value = state.totalDays;
-      targetHoursInput.value = Math.floor(state.targetMinutes / 60);
-      ensureEntriesLength();
-      renderDays();
-      updateSummary();
-    })();
+  <!-- ES Module entry point -->
+  <script type="module">
+    import { init } from "./ui.js";
+    init();
   </script>
+
 </body>
 </html>
