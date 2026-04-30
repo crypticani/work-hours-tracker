@@ -3,8 +3,9 @@
  *
  * Handles:
  *   - Fetch Attendance: Injects content.js into the active HRMS tab
- *   - Preview: Shows extracted data in the popup
- *   - Send to Tracker: Sends data to wht.crypticani.dev via messaging
+ *   - Preview: Shows extracted data by date (not weekday) with summary stats
+ *   - Month boundary indicator when week spans two months
+ *   - Send to Tracker: Sends day-keyed data to wht.crypticani.dev via messaging
  *   - Copy JSON: Copies formatted JSON to clipboard
  */
 
@@ -31,6 +32,17 @@
   const metaInfo       = document.getElementById("meta-info");
   const metaText       = document.getElementById("meta-text");
 
+  const summarySection = document.getElementById("summary-section");
+  const summaryWorked  = document.getElementById("summary-worked");
+  const summaryReq     = document.getElementById("summary-required");
+  const summaryRem     = document.getElementById("summary-remaining");
+  const summaryDays    = document.getElementById("summary-days");
+  const summaryBar     = document.getElementById("summary-bar-fill");
+  const summaryPct     = document.getElementById("summary-pct");
+
+  const monthNotice    = document.getElementById("month-notice");
+  const monthNoticeText = document.getElementById("month-notice-text");
+
   const postActions    = document.getElementById("post-actions");
   const sendResult     = document.getElementById("send-result");
   const sendIcon       = document.getElementById("send-icon");
@@ -38,14 +50,15 @@
 
   // ── State ─────────────────────────────────────────────────────────────────
 
-  let currentData = null;  // { "Mon": "09:45", ... }
-  const ALL_WORK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  let currentResult = null; // Full extraction result
+  let currentData = null;   // Legacy day-keyed { "Mon": "09:45", ... }
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
   // Check for previously extracted data
   chrome.runtime.sendMessage({ action: "GET_LAST_EXTRACTION" }, (result) => {
     if (result && result.success && result.data) {
+      currentResult = result;
       currentData = result.data;
       renderPreview(result);
     }
@@ -61,16 +74,16 @@
   // ── Fetch Attendance ──────────────────────────────────────────────────────
 
   async function handleFetch() {
-    // Show loading state
     setStatus("loading", "⏳", "Extracting attendance data...");
     setBadge("loading", "Working...");
     btnFetch.disabled = true;
     hideElement(previewSection);
     hideElement(postActions);
     hideElement(sendResult);
+    if (summarySection) hideElement(summarySection);
+    if (monthNotice) hideElement(monthNotice);
 
     try {
-      // Get the active tab
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
       if (!tab) {
@@ -80,7 +93,6 @@
         return;
       }
 
-      // Check if we have permission to inject into this tab
       if (tab.url?.startsWith("chrome://") || tab.url?.startsWith("chrome-extension://")) {
         setStatus("error", "❌", "Cannot extract from browser internal pages. Navigate to your HRMS attendance page first.");
         setBadge("error", "Error");
@@ -88,7 +100,6 @@
         return;
       }
 
-      // Send extraction request to background
       chrome.runtime.sendMessage(
         { action: "EXTRACT_ATTENDANCE", tabId: tab.id },
         (result) => {
@@ -114,6 +125,7 @@
           }
 
           // Success!
+          currentResult = result;
           currentData = result.data;
           const count = Object.keys(result.data).length;
 
@@ -166,13 +178,19 @@
   // ── Copy JSON ─────────────────────────────────────────────────────────────
 
   async function handleCopy() {
-    if (!currentData) return;
+    if (!currentResult) return;
+
+    // Build a rich JSON with both date-keyed and summary
+    const exportData = {
+      ...(currentResult.entries || {}),
+      _summary: currentResult.summary || null,
+      _legacy: currentData,
+    };
 
     try {
-      const json = JSON.stringify(currentData, null, 2);
+      const json = JSON.stringify(exportData, null, 2);
       await navigator.clipboard.writeText(json);
 
-      // Visual feedback
       const originalText = btnCopy.innerHTML;
       btnCopy.innerHTML = '<span class="btn-icon-left">✅</span> Copied!';
       btnCopy.classList.add("copied");
@@ -183,9 +201,8 @@
       }, 2000);
 
     } catch (err) {
-      // Fallback: textarea copy
       const textarea = document.createElement("textarea");
-      textarea.value = JSON.stringify(currentData, null, 2);
+      textarea.value = JSON.stringify(exportData, null, 2);
       document.body.appendChild(textarea);
       textarea.select();
       document.execCommand("copy");
@@ -196,10 +213,13 @@
   // ── Clear ─────────────────────────────────────────────────────────────────
 
   function handleClear() {
+    currentResult = null;
     currentData = null;
     hideElement(previewSection);
     hideElement(postActions);
     hideElement(sendResult);
+    if (summarySection) hideElement(summarySection);
+    if (monthNotice) hideElement(monthNotice);
     hideElement(statusArea);
     setBadge("", "Ready");
 
@@ -209,71 +229,187 @@
   // ── Render Preview ────────────────────────────────────────────────────────
 
   function renderPreview(result) {
-    const data = result.data;
+    const entries = result.entries || {};
+    const meta = result.meta || {};
+    const summary = result.summary || null;
+
     daysPreview.innerHTML = "";
 
-    // Determine which days to show (all work days, marking missing ones)
-    const presentDays = new Set(Object.keys(data));
-    const missingDaysList = ALL_WORK_DAYS.filter(d => !presentDays.has(d));
-
-    // Show all days in order (Mon → Fri for work days, then any weekend data)
-    const orderedDays = [...ALL_WORK_DAYS];
-    // Add any weekend days that have data
-    if (data["Sat"]) orderedDays.push("Sat");
-    if (data["Sun"]) orderedDays.push("Sun");
-
-    for (const day of orderedDays) {
-      const row = document.createElement("div");
-      row.className = "day-row";
-
-      const label = document.createElement("span");
-      label.className = "day-label";
-      label.textContent = day;
-
-      const value = document.createElement("span");
-
-      if (data[day]) {
-        value.className = "day-value";
-        value.textContent = data[day];
-      } else {
-        value.className = "day-value empty";
-        value.textContent = "No data";
-        row.classList.add("missing");
-      }
-
-      row.appendChild(label);
-      row.appendChild(value);
-      daysPreview.appendChild(row);
+    // ── Month Boundary Notice ───────────────────────────────────────────
+    if (meta.isMonthBoundary && monthNotice && monthNoticeText) {
+      const excluded = meta.excludedDates || [];
+      const excludedStr = excluded.map(d => d.display).join(", ");
+      monthNoticeText.textContent = `Adjusted for month boundary — showing ${meta.currentMonthName} only. Excluded: ${excludedStr}`;
+      showElement(monthNotice);
+    } else if (monthNotice) {
+      hideElement(monthNotice);
     }
 
-    // Week indicator
-    if (result.meta?.currentWeekOnly) {
+    // ── Day Rows (date-keyed) ───────────────────────────────────────────
+    const validDates = meta.validDatesList || [];
+    const hasEntries = Object.keys(entries).length > 0;
+
+    if (hasEntries) {
+      // Show rows ordered by date
+      const sortedDates = validDates.length > 0
+        ? validDates
+        : Object.keys(entries).sort();
+
+      for (const isoDate of sortedDates) {
+        const entry = entries[isoDate];
+        const row = document.createElement("div");
+        row.className = "day-row";
+
+        const labelWrap = document.createElement("div");
+        labelWrap.className = "day-label-wrap";
+
+        const label = document.createElement("span");
+        label.className = "day-label";
+
+        const dateTag = document.createElement("span");
+        dateTag.className = "day-date-tag";
+
+        if (entry) {
+          label.textContent = entry.day;
+          dateTag.textContent = entry.display || isoDate;
+        } else {
+          // Valid date but no attendance data
+          const d = new Date(isoDate + "T00:00:00");
+          const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+          label.textContent = dayNames[d.getDay()];
+          dateTag.textContent = formatDateSimple(d);
+          row.classList.add("missing");
+        }
+
+        labelWrap.appendChild(label);
+        labelWrap.appendChild(dateTag);
+
+        const value = document.createElement("span");
+        if (entry && entry.time) {
+          value.className = "day-value";
+          value.textContent = entry.time;
+        } else {
+          value.className = "day-value empty";
+          value.textContent = "No data";
+          row.classList.add("missing");
+        }
+
+        row.appendChild(labelWrap);
+        row.appendChild(value);
+        daysPreview.appendChild(row);
+      }
+    } else {
+      // Fallback: legacy day-keyed rendering
+      const data = result.data || {};
+      const ALL_WORK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+      const orderedDays = [...ALL_WORK_DAYS];
+      if (data["Sat"]) orderedDays.push("Sat");
+      if (data["Sun"]) orderedDays.push("Sun");
+
+      for (const day of orderedDays) {
+        const row = document.createElement("div");
+        row.className = "day-row";
+
+        const label = document.createElement("span");
+        label.className = "day-label";
+        label.textContent = day;
+
+        const value = document.createElement("span");
+        if (data[day]) {
+          value.className = "day-value";
+          value.textContent = data[day];
+        } else {
+          value.className = "day-value empty";
+          value.textContent = "No data";
+          row.classList.add("missing");
+        }
+
+        row.appendChild(label);
+        row.appendChild(value);
+        daysPreview.appendChild(row);
+      }
+    }
+
+    // ── Week Indicator ──────────────────────────────────────────────────
+    if (meta.isMonthBoundary) {
+      weekIndicator.textContent = `${meta.currentMonthName} · ${meta.daysConsidered}/${meta.totalWeekDays} days`;
+    } else if (meta.currentWeekOnly) {
       weekIndicator.textContent = "Current Week";
-      showElement(weekIndicator);
     } else {
       weekIndicator.textContent = "All Visible";
-      showElement(weekIndicator);
     }
+    showElement(weekIndicator);
 
-    // Missing days warning
-    if (missingDaysList.length > 0) {
-      missingText.textContent = `Missing: ${missingDaysList.join(", ")} — may be holiday/leave/not yet logged`;
+    // ── Missing Days ────────────────────────────────────────────────────
+    const datesWithData = new Set(Object.keys(entries));
+    const missingDatesList = validDates.filter(d => !datesWithData.has(d));
+
+    if (missingDatesList.length > 0) {
+      const missingDisplay = missingDatesList.map(iso => {
+        const d = new Date(iso + "T00:00:00");
+        const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        return dayNames[d.getDay()];
+      });
+      missingText.textContent = `Missing: ${missingDisplay.join(", ")} — may be holiday/leave/not yet logged`;
       showElement(missingDays);
     } else {
       hideElement(missingDays);
     }
 
-    // Meta info
-    if (result.meta) {
-      metaText.textContent = `${result.meta.validRowsExtracted} rows · ${result.meta.pageTitle?.slice(0, 40) || "HRMS"}`;
+    // ── Meta Info ───────────────────────────────────────────────────────
+    if (meta) {
+      metaText.textContent = `${meta.validRowsExtracted} rows · ${meta.daysConsidered} day${meta.daysConsidered !== 1 ? "s" : ""} considered`;
       showElement(metaInfo);
+    }
+
+    // ── Summary Stats ───────────────────────────────────────────────────
+    if (summary && summarySection) {
+      if (summaryWorked) summaryWorked.textContent = summary.totalWorked;
+      if (summaryReq) summaryReq.textContent = summary.required;
+
+      if (summaryRem) {
+        if (summary.surplus) {
+          summaryRem.textContent = `+${summary.surplus}`;
+          summaryRem.classList.add("surplus");
+          summaryRem.classList.remove("deficit");
+        } else if (summary.remainingMinutes > 0) {
+          summaryRem.textContent = `-${summary.remaining}`;
+          summaryRem.classList.add("deficit");
+          summaryRem.classList.remove("surplus");
+        } else {
+          summaryRem.textContent = "00:00";
+          summaryRem.classList.remove("surplus", "deficit");
+        }
+      }
+
+      if (summaryDays) {
+        summaryDays.textContent = `${summary.daysWithData}/${summary.daysConsidered}`;
+      }
+
+      if (summaryBar) {
+        summaryBar.style.width = `${summary.percentComplete}%`;
+        summaryBar.classList.toggle("complete", summary.percentComplete >= 100);
+      }
+
+      if (summaryPct) {
+        summaryPct.textContent = `${summary.percentComplete}%`;
+      }
+
+      showElement(summarySection);
     }
 
     showElement(previewSection);
     showElement(postActions);
   }
 
-  // ── UI Helpers ────────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function formatDateSimple(date) {
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    return `${date.getDate()} ${monthNames[date.getMonth()]} (${dayNames[date.getDay()]})`;
+  }
 
   function setStatus(type, icon, text) {
     statusIcon.textContent = icon;
@@ -294,7 +430,7 @@
     showElement(sendResult);
   }
 
-  function showElement(el) { el.classList.remove("hidden"); }
-  function hideElement(el) { el.classList.add("hidden"); }
+  function showElement(el) { if (el) el.classList.remove("hidden"); }
+  function hideElement(el) { if (el) el.classList.add("hidden"); }
 
 })();

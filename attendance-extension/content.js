@@ -5,6 +5,10 @@
  * Parses the attendance table, extracts day + Final Login, and returns
  * structured data back to the popup.
  *
+ * KEY DESIGN: Data is now keyed by ISO date (YYYY-MM-DD) rather than
+ * weekday name alone. This enables month-boundary filtering — when a
+ * work week spans two months, only days in the CURRENT month are included.
+ *
  * This script is NOT auto-injected — it's executed on-demand when the user
  * clicks "Fetch Attendance" in the popup.
  */
@@ -13,6 +17,8 @@
   "use strict";
 
   // ── Configuration ─────────────────────────────────────────────────────────
+
+  const DAILY_TARGET_HOURS = 9; // Configurable daily work target
 
   // Column header identifiers (case-insensitive matching)
   const FINAL_LOGIN_IDS = [
@@ -43,7 +49,54 @@
 
   const SHORT_DAYS = new Set(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
 
-  // ── Helper Functions ──────────────────────────────────────────────────────
+  // ── Date/Time Helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Parse a date string (DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, or YYYY-MM-DD)
+   * into a Date object. Returns null if unparseable.
+   * @param {string} dateStr
+   * @returns {Date|null}
+   */
+  function parseDate(dateStr) {
+    if (!dateStr || typeof dateStr !== "string") return null;
+    const trimmed = dateStr.trim();
+
+    // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if (ddmmyyyy) {
+      const [, dd, mm, yyyy] = ddmmyyyy;
+      const d = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd));
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    // YYYY-MM-DD (ISO)
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  /**
+   * Format a Date object to ISO date string YYYY-MM-DD.
+   * @param {Date} date
+   * @returns {string}
+   */
+  function toISODate(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  /**
+   * Format a Date to a display string like "30 Apr (Wed)".
+   * @param {Date} date
+   * @returns {string}
+   */
+  function formatDateDisplay(date) {
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${date.getDate()} ${monthNames[date.getMonth()]} (${dayNames[date.getDay()]})`;
+  }
 
   function normalizeDayName(dayStr) {
     if (!dayStr || typeof dayStr !== "string") return null;
@@ -58,16 +111,8 @@
   }
 
   function deriveDayFromDate(dateStr) {
-    if (!dateStr || typeof dateStr !== "string") return null;
-    let date;
-    const ddmmyyyy = dateStr.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-    if (ddmmyyyy) {
-      const [, dd, mm, yyyy] = ddmmyyyy;
-      date = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd));
-    } else {
-      date = new Date(dateStr);
-    }
-    if (isNaN(date.getTime())) return null;
+    const date = parseDate(dateStr);
+    if (!date) return null;
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return dayNames[date.getDay()];
   }
@@ -85,35 +130,95 @@
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
   }
 
-  function isCurrentWeek(dateStr) {
-    if (!dateStr) return true; // If no date, assume current week
-    let date;
-    const ddmmyyyy = dateStr.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
-    if (ddmmyyyy) {
-      const [, dd, mm, yyyy] = ddmmyyyy;
-      date = new Date(parseInt(yyyy), parseInt(mm) - 1, parseInt(dd));
-    } else {
-      date = new Date(dateStr);
-    }
-    if (isNaN(date.getTime())) return true; // Can't parse → include it
+  // ── Week & Month Boundary Logic ───────────────────────────────────────────
+
+  /**
+   * Get the Monday of the current week.
+   * @returns {Date} Monday at 00:00:00
+   */
+  function getMonday() {
     const now = new Date();
-    const dayOfWeek = now.getDay();
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
+    const offset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
     const monday = new Date(now);
-    monday.setDate(now.getDate() + mondayOffset);
+    monday.setDate(now.getDate() + offset);
     monday.setHours(0, 0, 0, 0);
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    sunday.setHours(23, 59, 59, 999);
-    return date >= monday && date <= sunday;
+    return monday;
   }
 
   /**
-   * Find column index by matching header text against identifiers.
-   * @param {NodeListOf<Element>} headerCells - <th> or <td> elements from header row
-   * @param {string[]} identifiers - possible column names
-   * @returns {number} 0-based index or -1
+   * Generate weekday dates (Mon–Fri) for the current week.
+   * @returns {Date[]} Array of 5 Date objects
    */
+  function generateWeekDates() {
+    const monday = getMonday();
+    const dates = [];
+    for (let i = 0; i < 5; i++) {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      dates.push(d);
+    }
+    return dates;
+  }
+
+  /**
+   * Filter dates to only include those in today's month.
+   * Handles month boundaries: if the week spans Apr→May, only Apr days
+   * are kept (assuming today is in April).
+   * @param {Date[]} dates
+   * @returns {{ validDates: Date[], filtered: boolean, currentMonth: number, currentYear: number }}
+   */
+  function filterByMonth(dates) {
+    const today = new Date();
+    const currentMonth = today.getMonth();
+    const currentYear = today.getFullYear();
+
+    const validDates = dates.filter(d =>
+      d.getMonth() === currentMonth && d.getFullYear() === currentYear
+    );
+
+    return {
+      validDates,
+      filtered: validDates.length < dates.length,
+      currentMonth,
+      currentYear,
+    };
+  }
+
+  /**
+   * Sum hours from "HH:MM" time strings.
+   * @param {string[]} times - Array of "HH:MM" strings
+   * @returns {{ totalMinutes: number, formatted: string }}
+   */
+  function sumHours(times) {
+    let totalMinutes = 0;
+    for (const t of times) {
+      if (!t) continue;
+      const [h, m] = t.split(":").map(Number);
+      totalMinutes += h * 60 + m;
+    }
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return {
+      totalMinutes,
+      formatted: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+    };
+  }
+
+  /**
+   * Format minutes as "HH:MM".
+   * @param {number} totalMinutes
+   * @returns {string}
+   */
+  function formatMinutes(totalMinutes) {
+    const h = Math.floor(Math.abs(totalMinutes) / 60);
+    const m = Math.abs(totalMinutes) % 60;
+    const sign = totalMinutes < 0 ? "-" : "";
+    return `${sign}${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+
+  // ── Column Detection ──────────────────────────────────────────────────────
+
   function findColIndex(headerCells, identifiers) {
     for (let i = 0; i < headerCells.length; i++) {
       const text = headerCells[i].textContent.trim().toLowerCase();
@@ -128,27 +233,16 @@
 
   // ── Table Detection ───────────────────────────────────────────────────────
 
-  /**
-   * Find the attendance table by looking for a table that has
-   * a "Final Login" (or equivalent) column header.
-   * Tries multiple strategies:
-   *   1. Look in all tables for matching header
-   *   2. Look in common HRMS containers
-   *   3. Fallback: largest table on page
-   */
   function findAttendanceTable() {
     const tables = document.querySelectorAll("table");
-
     console.log(`[HRMS Extractor] Found ${tables.length} table(s) on page`);
 
     // Strategy 1: Find table with "Final Login" column
     for (const table of tables) {
       const headerRow = table.querySelector("thead tr, tr:first-child");
       if (!headerRow) continue;
-
       const headerCells = headerRow.querySelectorAll("th, td");
       const finalLoginIdx = findColIndex(headerCells, FINAL_LOGIN_IDS);
-
       if (finalLoginIdx !== -1) {
         console.log(`[HRMS Extractor] ✅ Found table with "Final Login" at column ${finalLoginIdx}`);
         return { table, headerCells, finalLoginIdx };
@@ -157,28 +251,20 @@
 
     // Strategy 2: Look for known HRMS container selectors
     const containerSelectors = [
-      "[class*='attendance']",
-      "[class*='grid']",
-      "[id*='attendance']",
-      "[id*='grid']",
-      ".k-grid",          // Kendo UI grids
-      ".ag-root",         // AG Grid
-      "[role='grid']",    // ARIA grid role
+      "[class*='attendance']", "[class*='grid']",
+      "[id*='attendance']", "[id*='grid']",
+      ".k-grid", ".ag-root", "[role='grid']",
     ];
 
     for (const sel of containerSelectors) {
       const container = document.querySelector(sel);
       if (!container) continue;
-
       const table = container.querySelector("table");
       if (!table) continue;
-
       const headerRow = table.querySelector("thead tr, tr:first-child");
       if (!headerRow) continue;
-
       const headerCells = headerRow.querySelectorAll("th, td");
       const finalLoginIdx = findColIndex(headerCells, FINAL_LOGIN_IDS);
-
       if (finalLoginIdx !== -1) {
         console.log(`[HRMS Extractor] ✅ Found table inside "${sel}" container`);
         return { table, headerCells, finalLoginIdx };
@@ -192,7 +278,6 @@
     for (const table of tables) {
       const rows = table.querySelectorAll("tbody tr, tr");
       if (rows.length > bestRowCount) {
-        // Check if any cell contains a time-like pattern
         const hasTime = Array.from(rows).some(row =>
           Array.from(row.cells).some(cell =>
             /\d{1,2}:\d{2}(:\d{2})?/.test(cell.textContent.trim())
@@ -218,15 +303,21 @@
 
   // ── Main Extraction ───────────────────────────────────────────────────────
 
-  /**
-   * Extract attendance data from the current page.
-   * @returns {{ success: boolean, data: Object, rawRows: Array, errors: string[], meta: Object }}
-   */
   function extractAttendance() {
+    // Generate this week's valid work dates (filtered by current month)
+    const weekDates = generateWeekDates();
+    const { validDates, filtered: isMonthBoundary, currentMonth, currentYear } = filterByMonth(weekDates);
+
+    const monthNames = ["January", "February", "March", "April", "May", "June",
+                        "July", "August", "September", "October", "November", "December"];
+
     const result = {
       success: false,
-      data: {},          // { "Mon": "09:45", "Tue": "08:30", ... }
-      rawRows: [],       // Raw parsed rows for debugging
+      // NEW: date-keyed data → { "2026-04-28": { day: "Mon", date: "28/04/2026", time: "09:45", display: "28 Apr (Mon)" }, ... }
+      entries: {},
+      // LEGACY: day-keyed data for backward compat with tracker → { "Mon": "09:45", ... }
+      data: {},
+      rawRows: [],
       errors: [],
       meta: {
         pageTitle: document.title,
@@ -234,8 +325,22 @@
         extractedAt: new Date().toISOString(),
         totalRowsScanned: 0,
         validRowsExtracted: 0,
-        currentWeekOnly: false,
+        currentWeekOnly: true,
+        // NEW: month boundary metadata
+        isMonthBoundary,
+        currentMonthName: monthNames[currentMonth],
+        currentMonth,
+        currentYear,
+        daysConsidered: validDates.length,
+        totalWeekDays: weekDates.length,
+        dailyTargetHours: DAILY_TARGET_HOURS,
+        validDatesList: validDates.map(d => toISODate(d)),
+        excludedDates: weekDates
+          .filter(d => d.getMonth() !== currentMonth || d.getFullYear() !== currentYear)
+          .map(d => ({ iso: toISODate(d), display: formatDateDisplay(d) })),
       },
+      // NEW: weekly summary computed after extraction
+      summary: null,
     };
 
     // Find the attendance table
@@ -265,7 +370,6 @@
     // If Final Login column not identified, try to auto-detect time columns
     let effectiveFinalLoginIdx = finalLoginIdx;
     if (effectiveFinalLoginIdx === -1) {
-      // Scan first data row to find columns with time-like values
       const firstDataRow = table.querySelector("tbody tr, tr:nth-child(2)");
       if (firstDataRow) {
         const cells = firstDataRow.querySelectorAll("td, th");
@@ -287,6 +391,9 @@
       return result;
     }
 
+    // Build a Set of valid ISO dates for quick lookup
+    const validDateSet = new Set(validDates.map(d => toISODate(d)));
+
     // Get data rows (skip header)
     const allRows = table.querySelectorAll("tbody tr");
     const dataRows = allRows.length > 0
@@ -295,16 +402,12 @@
 
     result.meta.totalRowsScanned = dataRows.length;
 
-    // Check if we have date info to filter by current week
-    const hasDateColumn = dateIdx !== -1;
-    let currentWeekFiltered = false;
-
     // Process each row
     for (const row of dataRows) {
       const cells = row.querySelectorAll("td, th");
       if (cells.length === 0) continue;
 
-      // Skip rows with too few columns (likely summary/footer rows)
+      // Skip rows with too few columns
       if (cells.length < Math.max(effectiveFinalLoginIdx + 1, 2)) continue;
 
       // Extract raw values
@@ -318,18 +421,14 @@
       // Skip completely empty rows
       if (!timeVal && !dateVal && !dayVal) continue;
 
+      // Parse the date
+      const parsedDate = parseDate(dateVal);
+      const isoDate = parsedDate ? toISODate(parsedDate) : null;
+
       // Determine the day name
       let dayName = null;
-
-      // Priority 1: Use explicit Day column
-      if (dayVal) {
-        dayName = normalizeDayName(dayVal);
-      }
-
-      // Priority 2: Derive from Date column
-      if (!dayName && dateVal) {
-        dayName = deriveDayFromDate(dateVal);
-      }
+      if (dayVal) dayName = normalizeDayName(dayVal);
+      if (!dayName && dateVal) dayName = deriveDayFromDate(dateVal);
 
       // Skip if we can't determine the day
       if (!dayName) {
@@ -340,33 +439,78 @@
       // Convert time
       const convertedTime = convertTime(timeVal);
 
+      // Is this date in our valid set?
+      const isValidDate = isoDate ? validDateSet.has(isoDate) : false;
+
       // Store raw row for debugging
       result.rawRows.push({
         date: dateVal,
+        isoDate,
         day: dayName,
         rawTime: timeVal,
-        convertedTime: convertedTime,
-        isCurrentWeek: hasDateColumn ? isCurrentWeek(dateVal) : null,
+        convertedTime,
+        isValidDate,
+        isWeekend: parsedDate ? (parsedDate.getDay() === 0 || parsedDate.getDay() === 6) : false,
       });
 
       // Skip if no valid time
       if (!convertedTime) continue;
 
-      // Filter by current week if we have date info
-      if (hasDateColumn && dateVal) {
-        if (!isCurrentWeek(dateVal)) {
-          currentWeekFiltered = true;
-          continue;
-        }
+      // Only include dates that are in the valid set (current week + current month)
+      if (isoDate && !isValidDate) {
+        continue;
       }
 
-      // Store the data (last occurrence wins if same day appears twice)
+      // If we don't have a date column, fall back to current-week check
+      if (!isoDate) {
+        // Can't do date-based filtering without dates, include all
+        console.log(`[HRMS Extractor] ⚠️ No date for row, including by default: day=${dayName}`);
+      }
+
+      // Store date-keyed entry
+      if (isoDate) {
+        result.entries[isoDate] = {
+          day: dayName,
+          date: dateVal,
+          time: convertedTime,
+          display: parsedDate ? formatDateDisplay(parsedDate) : dateVal,
+        };
+      }
+
+      // Legacy: store day-keyed data (last occurrence wins)
       result.data[dayName] = convertedTime;
       result.meta.validRowsExtracted++;
     }
 
-    result.meta.currentWeekOnly = currentWeekFiltered;
     result.success = Object.keys(result.data).length > 0;
+
+    // ── Compute Weekly Summary ──────────────────────────────────────────────
+
+    if (result.success) {
+      const workedTimes = Object.values(result.entries).map(e => e.time);
+      const { totalMinutes: workedMinutes, formatted: totalWorked } = sumHours(workedTimes);
+
+      const requiredMinutes = validDates.length * DAILY_TARGET_HOURS * 60;
+      const remainingMinutes = requiredMinutes - workedMinutes;
+
+      result.summary = {
+        totalWorked,
+        totalWorkedMinutes: workedMinutes,
+        required: formatMinutes(requiredMinutes),
+        requiredMinutes,
+        remaining: formatMinutes(Math.max(0, remainingMinutes)),
+        remainingMinutes: Math.max(0, remainingMinutes),
+        surplus: remainingMinutes < 0 ? formatMinutes(Math.abs(remainingMinutes)) : null,
+        surplusMinutes: remainingMinutes < 0 ? Math.abs(remainingMinutes) : 0,
+        daysConsidered: validDates.length,
+        daysWithData: Object.keys(result.entries).length,
+        dailyTarget: DAILY_TARGET_HOURS,
+        isMonthBoundary,
+        percentComplete: requiredMinutes > 0
+          ? Math.min(100, Math.round((workedMinutes / requiredMinutes) * 100))
+          : 0,
+      };
+    }
 
     if (!result.success) {
       result.errors.push(
@@ -381,6 +525,5 @@
 
   // ── Execute and return result ─────────────────────────────────────────────
 
-  // This runs when the script is injected via chrome.scripting.executeScript
   return extractAttendance();
 })();

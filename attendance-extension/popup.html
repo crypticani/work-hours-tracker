@@ -36,6 +36,12 @@
       <div id="status-text" class="status-text">Extracting data...</div>
     </div>
 
+    <!-- ── Month Boundary Notice ────────────────────────────── -->
+    <div id="month-notice" class="month-notice hidden">
+      <span class="month-notice-icon">📅</span>
+      <span id="month-notice-text" class="month-notice-text"></span>
+    </div>
+
     <!-- ── Data Preview ─────────────────────────────────────── -->
     <div id="preview-section" class="preview-section hidden">
       <div class="preview-header">
@@ -54,6 +60,40 @@
       <!-- Meta info -->
       <div id="meta-info" class="meta-info hidden">
         <span id="meta-text" class="meta-text"></span>
+      </div>
+    </div>
+
+    <!-- ── Weekly Summary ───────────────────────────────────── -->
+    <div id="summary-section" class="summary-section hidden">
+      <div class="section-label">Weekly Summary</div>
+
+      <div class="summary-grid">
+        <div class="summary-stat">
+          <div class="summary-stat-label">Worked</div>
+          <div id="summary-worked" class="summary-stat-value worked">00:00</div>
+        </div>
+        <div class="summary-stat">
+          <div class="summary-stat-label">Required</div>
+          <div id="summary-required" class="summary-stat-value required">00:00</div>
+        </div>
+        <div class="summary-stat">
+          <div class="summary-stat-label">Remaining</div>
+          <div id="summary-remaining" class="summary-stat-value remaining">00:00</div>
+        </div>
+        <div class="summary-stat">
+          <div class="summary-stat-label">Days</div>
+          <div id="summary-days" class="summary-stat-value days">0/0</div>
+        </div>
+      </div>
+
+      <div class="summary-progress">
+        <div class="summary-progress-labels">
+          <span id="summary-pct" class="summary-pct">0%</span>
+          <span class="summary-pct-target">Target</span>
+        </div>
+        <div class="summary-progress-track">
+          <div id="summary-bar-fill" class="summary-bar-fill" style="width: 0%;"></div>
+        </div>
       </div>
     </div>
 
@@ -85,7 +125,7 @@
     <footer class="popup-footer">
       <a href="https://wht.crypticani.dev" target="_blank" rel="noopener">Open Tracker</a>
       <span class="footer-dot">·</span>
-      <span>v1.0.0</span>
+      <span>v1.1.0</span>
     </footer>
 
   </div>
