@@ -14,6 +14,8 @@ import {
   clearWeekData,
 } from "./config.js";
 
+import { initExtensionPrompt } from "./extension-prompt.js";
+
 import {
   calculateTotalCompletedHours,
   calculateRemainingHours,
@@ -577,4 +579,7 @@ export function init() {
 
   btnResetWeek.addEventListener("click", resetWeek);
   btnThemeToggle.addEventListener("click", toggleTheme);
+
+  // Extension install prompt / connected badge
+  initExtensionPrompt();
 }

@@ -16,6 +16,11 @@
 
   console.log("[WHT Bridge] Content script loaded on Work Hours Tracker");
 
+  // ── Expose presence marker for the website to detect ──────────────────────
+  // The tracker site checks for this attribute to know the extension is installed.
+  document.documentElement.dataset.whtExtension = "true";
+  window.dispatchEvent(new CustomEvent("wht-extension-ready"));
+
   /**
    * Convert "HH:MM" string to decimal hours (e.g., "09:30" → 9.5).
    */
