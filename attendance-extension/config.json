@@ -1,0 +1,23 @@
+{
+  "_comment": "Selector configuration — tweak these if the HRMS UI changes without redeploying the extension.",
+  "tableSelector": {
+    "primary": "table",
+    "fallback": "[class*='attendance'], [class*='table'], [id*='attendance'], [id*='grid']"
+  },
+  "columnIdentifiers": {
+    "finalLogin": ["Final Login", "Final_Login", "FinalLogin", "Total Hours", "Worked Hours", "Working Hours"],
+    "date": ["Date", "Att. Date", "Attendance Date"],
+    "day": ["Day", "Shift Day", "Week Day", "Weekday"]
+  },
+  "trackerUrl": "https://wht.crypticani.dev",
+  "ignoreTimeValues": ["00:00:00", "00:00", "0:00:00", "0:00", "-", "--", "N/A", ""],
+  "weekdayMap": {
+    "Monday": "Mon",
+    "Tuesday": "Tue",
+    "Wednesday": "Wed",
+    "Thursday": "Thu",
+    "Friday": "Fri",
+    "Saturday": "Sat",
+    "Sunday": "Sun"
+  }
+}

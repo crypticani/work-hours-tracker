@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HRMS Attendance Extractor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <div class="popup-wrapper">
+
+    <!-- ── Header ───────────────────────────────────────────── -->
+    <header class="popup-header">
+      <div class="popup-title">
+        <span class="popup-icon">📊</span>
+        <div>
+          <h1>Attendance Extractor</h1>
+          <p class="popup-subtitle">HRMS → Work Hours Tracker</p>
+        </div>
+      </div>
+      <div class="header-badge" id="status-badge">Ready</div>
+    </header>
+
+    <!-- ── Action Buttons ───────────────────────────────────── -->
+    <div class="action-bar">
+      <button id="btn-fetch" class="btn btn-primary btn-full">
+        <span class="btn-icon-left">🔍</span>
+        Fetch Attendance
+      </button>
+    </div>
+
+    <!-- ── Status Message ───────────────────────────────────── -->
+    <div id="status-area" class="status-area hidden">
+      <div id="status-icon" class="status-icon">⏳</div>
+      <div id="status-text" class="status-text">Extracting data...</div>
+    </div>
+
+    <!-- ── Data Preview ─────────────────────────────────────── -->
+    <div id="preview-section" class="preview-section hidden">
+      <div class="preview-header">
+        <h2 class="section-label">Extracted Data</h2>
+        <span id="week-indicator" class="week-indicator"></span>
+      </div>
+
+      <div id="days-preview" class="days-preview"></div>
+
+      <!-- Missing days -->
+      <div id="missing-days" class="missing-days hidden">
+        <span class="missing-icon">⚠️</span>
+        <span id="missing-text" class="missing-text"></span>
+      </div>
+
+      <!-- Meta info -->
+      <div id="meta-info" class="meta-info hidden">
+        <span id="meta-text" class="meta-text"></span>
+      </div>
+    </div>
+
+    <!-- ── Action Buttons (after data) ──────────────────────── -->
+    <div id="post-actions" class="action-bar post-actions hidden">
+      <button id="btn-send" class="btn btn-accent btn-full">
+        <span class="btn-icon-left">🚀</span>
+        Send to Tracker
+      </button>
+      <div class="action-row">
+        <button id="btn-copy" class="btn btn-ghost btn-half">
+          <span class="btn-icon-left">📋</span>
+          Copy JSON
+        </button>
+        <button id="btn-clear" class="btn btn-ghost-danger btn-half">
+          <span class="btn-icon-left">🗑️</span>
+          Clear
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Send Result ──────────────────────────────────────── -->
+    <div id="send-result" class="send-result hidden">
+      <div id="send-icon" class="send-icon">✅</div>
+      <div id="send-text" class="send-text">Data sent successfully!</div>
+    </div>
+
+    <!-- ── Footer ───────────────────────────────────────────── -->
+    <footer class="popup-footer">
+      <a href="https://wht.crypticani.dev" target="_blank" rel="noopener">Open Tracker</a>
+      <span class="footer-dot">·</span>
+      <span>v1.0.0</span>
+    </footer>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
