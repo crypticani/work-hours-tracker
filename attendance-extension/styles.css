@@ -246,6 +246,91 @@ body::before {
 .meta-info { margin-top: 6px; padding: 6px 12px; border-radius: var(--radius-sm); background: var(--bg-elevated); border: 1px solid var(--border-subtle); }
 .meta-text { font-size: 0.6875rem; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
 
+/* ── Logout Time Card ─────────────────────────────────────── */
+.logout-section {
+  animation: fadeSlideIn 0.3s ease;
+}
+
+.logout-card {
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, rgba(45,212,191,0.06), rgba(88,166,255,0.04));
+  border: 1px solid rgba(45,212,191,0.2);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.logout-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--accent-teal), var(--accent-blue));
+  opacity: 0.6;
+}
+
+.logout-section.done .logout-card {
+  background: linear-gradient(135deg, rgba(63,185,80,0.06), rgba(45,212,191,0.04));
+  border-color: rgba(63,185,80,0.2);
+}
+
+.logout-section.done .logout-card::before {
+  background: linear-gradient(90deg, var(--accent-green), var(--accent-teal));
+}
+
+.logout-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.logout-card-icon { font-size: 1.1rem; line-height: 1; }
+
+.logout-card-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.logout-card-time {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--accent-teal);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin-bottom: 8px;
+}
+
+.logout-section.done .logout-card-time {
+  color: var(--accent-green);
+  font-size: 1.25rem;
+}
+
+.logout-card-detail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.logout-meta {
+  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.logout-separator {
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  opacity: 0.5;
+}
+
 /* ── Send Result ──────────────────────────────────────────── */
 .send-result {
   display: flex; align-items: center; gap: 10px; padding: 12px 14px;

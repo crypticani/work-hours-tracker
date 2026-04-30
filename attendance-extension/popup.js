@@ -43,6 +43,13 @@
   const monthNotice    = document.getElementById("month-notice");
   const monthNoticeText = document.getElementById("month-notice-text");
 
+  const logoutSection    = document.getElementById("logout-section");
+  const logoutTimeEl     = document.getElementById("logout-time");
+  const logoutIconEl     = document.getElementById("logout-icon");
+  const logoutLabelEl    = document.getElementById("logout-label");
+  const logoutLoginInfo  = document.getElementById("logout-login-info");
+  const logoutRemInfo    = document.getElementById("logout-remaining-info");
+
   const postActions    = document.getElementById("post-actions");
   const sendResult     = document.getElementById("send-result");
   const sendIcon       = document.getElementById("send-icon");
@@ -82,6 +89,7 @@
     hideElement(sendResult);
     if (summarySection) hideElement(summarySection);
     if (monthNotice) hideElement(monthNotice);
+    if (logoutSection) hideElement(logoutSection);
 
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -220,6 +228,7 @@
     hideElement(sendResult);
     if (summarySection) hideElement(summarySection);
     if (monthNotice) hideElement(monthNotice);
+    if (logoutSection) hideElement(logoutSection);
     hideElement(statusArea);
     setBadge("", "Ready");
 
@@ -398,6 +407,30 @@
       showElement(summarySection);
     }
 
+    // ── Logout Time Card ────────────────────────────────────────────────
+    if (summary && logoutSection) {
+      if (summary.logoutStatus === "ok" && summary.logoutTime) {
+        logoutTimeEl.textContent = format24to12(summary.logoutTime);
+        logoutIconEl.textContent = "🕐";
+        logoutLabelEl.textContent = "Today's Logout";
+        logoutLoginInfo.textContent = `Login: ${format24to12(summary.todayLoginTime)}`;
+        logoutRemInfo.textContent = `Remaining: ${summary.todayRemainingFormatted}`;
+        logoutSection.className = "logout-section";
+        showElement(logoutSection);
+      } else if (summary.logoutStatus === "done") {
+        logoutTimeEl.textContent = "Target Met ✅";
+        logoutIconEl.textContent = "🎉";
+        logoutLabelEl.textContent = "Weekly Target Complete";
+        logoutLoginInfo.textContent = `Login: ${format24to12(summary.todayLoginTime)}`;
+        logoutRemInfo.textContent = `Surplus: ${summary.surplus || "00:00"}`;
+        logoutSection.className = "logout-section done";
+        showElement(logoutSection);
+      } else {
+        // no-login: today login not found on page
+        hideElement(logoutSection);
+      }
+    }
+
     showElement(previewSection);
     showElement(postActions);
   }
@@ -409,6 +442,20 @@
                         "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     return `${date.getDate()} ${monthNames[date.getMonth()]} (${dayNames[date.getDay()]})`;
+  }
+
+  /**
+   * Convert 24h "HH:MM" to 12h "h:MM AM/PM" for display.
+   * @param {string} time24 - "HH:MM" format
+   * @returns {string} "h:MM AM/PM"
+   */
+  function format24to12(time24) {
+    if (!time24) return "--:--";
+    const [h, m] = time24.split(":").map(Number);
+    if (isNaN(h) || isNaN(m)) return time24;
+    const period = h >= 12 ? "PM" : "AM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${h12}:${String(m).padStart(2, "0")} ${period}`;
   }
 
   function setStatus(type, icon, text) {

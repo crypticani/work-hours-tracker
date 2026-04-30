@@ -20,6 +20,12 @@
 
   const DAILY_TARGET_HOURS = 9; // Configurable daily work target
 
+  // "Today Login" label identifiers (for the page header area, not the table)
+  const TODAY_LOGIN_LABELS = [
+    "today login", "today's login", "login time", "today_login",
+    "current login", "check in", "check-in"
+  ];
+
   // Column header identifiers (case-insensitive matching)
   const FINAL_LOGIN_IDS = [
     "final login", "final_login", "finallogin",
@@ -128,6 +134,99 @@
     if (hours === 0 && minutes === 0) return null;
     if (hours > 23 || minutes > 59) return null;
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  }
+
+  /**
+   * Convert 12-hour AM/PM time to 24-hour HH:MM format.
+   * Handles: "09:38:41 AM" → "09:38", "02:30:00 PM" → "14:30"
+   * @param {string} timeStr
+   * @returns {string|null} "HH:MM" in 24h format, or null
+   */
+  function convertAMPM(timeStr) {
+    if (!timeStr || typeof timeStr !== "string") return null;
+    const trimmed = timeStr.trim();
+
+    // Match "HH:MM:SS AM/PM" or "HH:MM AM/PM" (with optional seconds)
+    const match = trimmed.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm|a\.m\.|p\.m\.?)$/i);
+    if (!match) {
+      // Try without AM/PM — might already be 24h format
+      return convertTime(timeStr);
+    }
+
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const period = match[4].toUpperCase().replace(/\./g, "");
+
+    // Convert to 24h
+    if (period === "AM" || period === "A") {
+      if (hours === 12) hours = 0; // 12:xx AM = 00:xx
+    } else if (period === "PM" || period === "P") {
+      if (hours !== 12) hours += 12; // 1-11 PM → 13-23
+    }
+
+    if (hours > 23 || minutes > 59) return null;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+  }
+
+  /**
+   * Extract "Today Login" time from the HRMS page header/body.
+   * Searches for text patterns like "Today Login 09:38:41 AM" or
+   * "Today Login: 09:38:41 AM" anywhere on the page outside the table.
+   * @returns {{ raw: string, time24: string, found: boolean }}
+   */
+  function extractTodayLogin() {
+    const result = { raw: null, time24: null, found: false };
+
+    // Strategy 1: Search all text nodes for "Today Login" + time pattern
+    const allElements = document.querySelectorAll(
+      "div, span, p, td, th, label, strong, b, h1, h2, h3, h4, h5, h6, li, small"
+    );
+
+    // Regex: matches "Today Login" (or variants) followed by a time
+    const loginRegex = /today(?:'?s?)?\s*login[:\s]*([\d]{1,2}:[\d]{2}(?::[\d]{2})?(?:\s*(?:AM|PM|am|pm))?)/i;
+
+    for (const el of allElements) {
+      // Only check direct text content (avoid deep nesting noise)
+      const text = el.textContent?.trim();
+      if (!text || text.length > 200) continue;
+
+      const match = text.match(loginRegex);
+      if (match) {
+        result.raw = match[1].trim();
+        result.time24 = convertAMPM(result.raw);
+        result.found = true;
+        console.log(`[HRMS Extractor] ✅ Found Today Login: "${result.raw}" → ${result.time24}`);
+        break;
+      }
+    }
+
+    // Strategy 2: Look for elements with specific class/id patterns
+    if (!result.found) {
+      const candidates = document.querySelectorAll(
+        "[class*='today'], [class*='login-time'], [class*='checkin'], " +
+        "[id*='today'], [id*='login-time'], [id*='checkin']"
+      );
+
+      for (const el of candidates) {
+        const text = el.textContent?.trim();
+        if (!text) continue;
+        // Look for time-like pattern
+        const timeMatch = text.match(/(\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:AM|PM|am|pm))?)/);
+        if (timeMatch) {
+          result.raw = timeMatch[1].trim();
+          result.time24 = convertAMPM(result.raw);
+          result.found = true;
+          console.log(`[HRMS Extractor] ✅ Found Today Login via selector: "${result.raw}" → ${result.time24}`);
+          break;
+        }
+      }
+    }
+
+    if (!result.found) {
+      console.log("[HRMS Extractor] ⚠️ Could not find Today Login on page");
+    }
+
+    return result;
   }
 
   // ── Week & Month Boundary Logic ───────────────────────────────────────────
@@ -311,14 +410,19 @@
     const monthNames = ["January", "February", "March", "April", "May", "June",
                         "July", "August", "September", "October", "November", "December"];
 
+    // Extract today's login time from the page header
+    const todayLogin = extractTodayLogin();
+
     const result = {
       success: false,
-      // NEW: date-keyed data → { "2026-04-28": { day: "Mon", date: "28/04/2026", time: "09:45", display: "28 Apr (Mon)" }, ... }
+      // Date-keyed data → { "2026-04-28": { day: "Mon", date: "28/04/2026", time: "09:45", display: "28 Apr (Mon)" }, ... }
       entries: {},
-      // LEGACY: day-keyed data for backward compat with tracker → { "Mon": "09:45", ... }
+      // Legacy day-keyed data for backward compat with tracker → { "Mon": "09:45", ... }
       data: {},
       rawRows: [],
       errors: [],
+      // Today's login time (extracted from HRMS header)
+      todayLogin,
       meta: {
         pageTitle: document.title,
         pageUrl: window.location.href,
@@ -326,7 +430,6 @@
         totalRowsScanned: 0,
         validRowsExtracted: 0,
         currentWeekOnly: true,
-        // NEW: month boundary metadata
         isMonthBoundary,
         currentMonthName: monthNames[currentMonth],
         currentMonth,
@@ -339,7 +442,7 @@
           .filter(d => d.getMonth() !== currentMonth || d.getFullYear() !== currentYear)
           .map(d => ({ iso: toISODate(d), display: formatDateDisplay(d) })),
       },
-      // NEW: weekly summary computed after extraction
+      // Weekly summary computed after extraction
       summary: null,
     };
 
@@ -493,6 +596,30 @@
       const requiredMinutes = validDates.length * DAILY_TARGET_HOURS * 60;
       const remainingMinutes = requiredMinutes - workedMinutes;
 
+      // ── Compute Logout Time ──────────────────────────────────────────────
+      let logoutTime = null;
+      let logoutStatus = "no-login";
+      let todayRemainingMinutes = null;
+
+      if (todayLogin.found && todayLogin.time24) {
+        const [loginH, loginM] = todayLogin.time24.split(":").map(Number);
+        const loginTotalMinutes = loginH * 60 + loginM;
+
+        if (remainingMinutes <= 0) {
+          // Already completed weekly target — can logout now
+          logoutStatus = "done";
+          logoutTime = null;
+          todayRemainingMinutes = 0;
+        } else {
+          todayRemainingMinutes = remainingMinutes;
+          const logoutTotalMinutes = loginTotalMinutes + remainingMinutes;
+          const logoutH = Math.floor(logoutTotalMinutes / 60);
+          const logoutM = logoutTotalMinutes % 60;
+          logoutTime = `${String(logoutH).padStart(2, "0")}:${String(logoutM).padStart(2, "0")}`;
+          logoutStatus = "ok";
+        }
+      }
+
       result.summary = {
         totalWorked,
         totalWorkedMinutes: workedMinutes,
@@ -509,6 +636,14 @@
         percentComplete: requiredMinutes > 0
           ? Math.min(100, Math.round((workedMinutes / requiredMinutes) * 100))
           : 0,
+        // Logout calculation
+        todayLoginTime: todayLogin.time24,
+        todayLoginRaw: todayLogin.raw,
+        logoutTime,
+        logoutStatus,
+        todayRemainingMinutes,
+        todayRemainingFormatted: todayRemainingMinutes !== null
+          ? formatMinutes(todayRemainingMinutes) : null,
       };
     }
 
