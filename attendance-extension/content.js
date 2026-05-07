@@ -611,8 +611,13 @@
           logoutTime = null;
           todayRemainingMinutes = 0;
         } else {
-          todayRemainingMinutes = remainingMinutes;
-          const logoutTotalMinutes = loginTotalMinutes + remainingMinutes;
+          const todayIso = toISODate(new Date());
+          const futureDays = validDates.filter(d => toISODate(d) > todayIso).length;
+          
+          todayRemainingMinutes = remainingMinutes - (futureDays * DAILY_TARGET_HOURS * 60);
+          if (todayRemainingMinutes < 0) todayRemainingMinutes = 0;
+
+          const logoutTotalMinutes = loginTotalMinutes + todayRemainingMinutes;
           const logoutH = Math.floor(logoutTotalMinutes / 60);
           const logoutM = logoutTotalMinutes % 60;
           logoutTime = `${String(logoutH).padStart(2, "0")}:${String(logoutM).padStart(2, "0")}`;

@@ -453,9 +453,13 @@
     if (!time24) return "--:--";
     const [h, m] = time24.split(":").map(Number);
     if (isNaN(h) || isNaN(m)) return time24;
-    const period = h >= 12 ? "PM" : "AM";
-    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-    return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+    
+    const isNextDay = h >= 24;
+    const realH = h % 24;
+    const period = realH >= 12 ? "PM" : "AM";
+    const h12 = realH === 0 ? 12 : realH > 12 ? realH - 12 : realH;
+    
+    return `${h12}:${String(m).padStart(2, "0")} ${period}${isNextDay ? " (+1d)" : ""}`;
   }
 
   function setStatus(type, icon, text) {
