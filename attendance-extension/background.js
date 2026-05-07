@@ -9,7 +9,6 @@
 
 // ── State ───────────────────────────────────────────────────────────────────
 
-let lastExtraction = null;
 let trackerTabId = null;
 
 // ── Message Handlers ────────────────────────────────────────────────────────
@@ -46,7 +45,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
 
           const extraction = results[0].result;
-          lastExtraction = extraction;
 
           // Update badge
           if (extraction.success) {
@@ -58,7 +56,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             chrome.action.setBadgeBackgroundColor({ color: "#f85149" });
           }
 
-          sendResponse(extraction);
+          chrome.storage.local.set({ lastExtraction: extraction }).then(() => {
+            sendResponse(extraction);
+          });
         }
       );
 
@@ -121,16 +121,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     // ── Get last extraction (popup re-opened) ──
     case "GET_LAST_EXTRACTION": {
-      sendResponse(lastExtraction);
-      break;
+      chrome.storage.local.get(["lastExtraction"]).then((result) => {
+        sendResponse(result.lastExtraction || null);
+      });
+      return true; // Async response
     }
 
     // ── Clear stored data ──
     case "CLEAR_DATA": {
-      lastExtraction = null;
-      chrome.action.setBadgeText({ text: "" });
-      sendResponse({ success: true });
-      break;
+      chrome.storage.local.remove(["lastExtraction"]).then(() => {
+        chrome.action.setBadgeText({ text: "" });
+        sendResponse({ success: true });
+      });
+      return true; // Async response
     }
   }
 });
