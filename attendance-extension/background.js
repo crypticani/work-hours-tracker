@@ -21,46 +21,100 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const tabId = message.tabId;
       console.log(`[BG] Extracting attendance from tab ${tabId}`);
 
-      chrome.scripting.executeScript(
-        {
-          target: { tabId },
-          files: ["content.js"],
-        },
-        (results) => {
-          if (chrome.runtime.lastError) {
-            console.error("[BG] Script injection failed:", chrome.runtime.lastError.message);
-            sendResponse({
-              success: false,
-              error: chrome.runtime.lastError.message,
-            });
-            return;
+      getTrackerConfig().then((trackerConfig) => {
+        chrome.scripting.executeScript(
+          {
+            target: { tabId },
+            func: (workPolicy) => {
+              globalThis.__WHT_POLICY = workPolicy || null;
+            },
+            args: [trackerConfig],
+          },
+          () => {
+            if (chrome.runtime.lastError) {
+              console.error("[BG] Policy injection failed:", chrome.runtime.lastError.message);
+              sendResponse({
+                success: false,
+                error: chrome.runtime.lastError.message,
+              });
+              return;
+            }
+
+            chrome.scripting.executeScript(
+              {
+                target: { tabId },
+                files: ["logic.js"],
+              },
+              () => {
+                if (chrome.runtime.lastError) {
+                  console.error("[BG] Logic injection failed:", chrome.runtime.lastError.message);
+                  sendResponse({
+                    success: false,
+                    error: chrome.runtime.lastError.message,
+                  });
+                  return;
+                }
+
+                chrome.scripting.executeScript(
+                  {
+                    target: { tabId },
+                    files: ["content.js"],
+                  },
+                  (results) => {
+                    if (chrome.runtime.lastError) {
+                      console.error("[BG] Content script injection failed:", chrome.runtime.lastError.message);
+                      sendResponse({
+                        success: false,
+                        error: chrome.runtime.lastError.message,
+                      });
+                      return;
+                    }
+
+                    let extractionResult = results?.find((item) =>
+                      item?.result && typeof item.result === "object" && "success" in item.result
+                    );
+
+                    if (extractionResult) {
+                      handleExtractionResult(extractionResult.result, sendResponse);
+                      return;
+                    }
+
+                    chrome.scripting.executeScript(
+                      {
+                        target: { tabId },
+                        func: () => globalThis.__WHT_LAST_EXTRACTION || null,
+                      },
+                      (fallbackResults) => {
+                        if (chrome.runtime.lastError) {
+                          sendResponse({
+                            success: false,
+                            error: chrome.runtime.lastError.message,
+                          });
+                          return;
+                        }
+
+                        extractionResult = fallbackResults?.find((item) =>
+                          item?.result && typeof item.result === "object" && "success" in item.result
+                        );
+
+                        if (!extractionResult) {
+                          sendResponse({
+                            success: false,
+                            error: "No result returned from content script. Make sure you're on the HRMS attendance page.",
+                          });
+                          return;
+                        }
+
+                        handleExtractionResult(extractionResult.result, sendResponse);
+                      }
+                    );
+                  }
+                );
+              }
+            );
           }
-
-          if (!results || results.length === 0 || !results[0].result) {
-            sendResponse({
-              success: false,
-              error: "No result returned from content script. Make sure you're on the HRMS attendance page.",
-            });
-            return;
-          }
-
-          const extraction = results[0].result;
-
-          // Update badge
-          if (extraction.success) {
-            const count = Object.keys(extraction.data).length;
-            chrome.action.setBadgeText({ text: String(count) });
-            chrome.action.setBadgeBackgroundColor({ color: "#3fb950" });
-          } else {
-            chrome.action.setBadgeText({ text: "!" });
-            chrome.action.setBadgeBackgroundColor({ color: "#f85149" });
-          }
-
-          chrome.storage.local.set({ lastExtraction: extraction }).then(() => {
-            sendResponse(extraction);
-          });
-        }
-      );
+        );
+      });
 
       return true; // Async response
     }
@@ -68,6 +122,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // ── Popup requests sending data to tracker tab ──
     case "SEND_TO_TRACKER": {
       const data = message.data;
+      const refreshDays = message.refreshDays;
       console.log("[BG] Sending data to tracker:", data);
 
       findTrackerTab()
@@ -85,7 +140,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           // Send data to the tracker tab's content script
           chrome.tabs.sendMessage(
             tabId,
-            { action: "FILL_TRACKER", data },
+            { action: "FILL_TRACKER", data, refreshDays },
             (response) => {
               if (chrome.runtime.lastError) {
                 console.error("[BG] Failed to send to tracker:", chrome.runtime.lastError.message);
@@ -163,6 +218,41 @@ async function findTrackerTab() {
   );
 
   return tracker ? tracker.id : null;
+}
+
+function handleExtractionResult(extraction, sendResponse) {
+  if (extraction.success) {
+    const count = Object.keys(extraction.data || {}).length;
+    chrome.action.setBadgeText({ text: String(count) });
+    chrome.action.setBadgeBackgroundColor({ color: "#3fb950" });
+  } else {
+    chrome.action.setBadgeText({ text: "!" });
+    chrome.action.setBadgeBackgroundColor({ color: "#f85149" });
+  }
+
+  chrome.storage.local.set({ lastExtraction: extraction }).then(() => {
+    sendResponse(extraction);
+  });
+}
+
+/**
+ * Read the tracker page config when the tracker tab is open.
+ * Falls back to extension defaults when unavailable.
+ * @returns {Promise<Object|null>}
+ */
+async function getTrackerConfig() {
+  const tabId = await findTrackerTab();
+  if (!tabId) return null;
+
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { action: "GET_TRACKER_CONFIG" }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.success) {
+        resolve(null);
+        return;
+      }
+      resolve(response.config || null);
+    });
+  });
 }
 
 // ── Install / Update ────────────────────────────────────────────────────────

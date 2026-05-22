@@ -126,7 +126,7 @@
           }
 
           if (!result.success) {
-            const errorMsg = result.errors?.join("\n") || "Unknown error occurred.";
+            const errorMsg = result.errors?.join("\n") || result.error || "Unknown error occurred.";
             setStatus("error", "❌", errorMsg);
             setBadge("error", "Failed");
             return;
@@ -162,7 +162,11 @@
     hideElement(sendResult);
 
     chrome.runtime.sendMessage(
-      { action: "SEND_TO_TRACKER", data: currentData },
+      {
+        action: "SEND_TO_TRACKER",
+        data: currentData,
+        refreshDays: currentResult?.meta?.refreshDays || Object.keys(currentData),
+      },
       (response) => {
         btnSend.disabled = false;
 

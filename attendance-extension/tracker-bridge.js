@@ -16,19 +16,15 @@
 
   console.log("[WHT Bridge] Content script loaded on Work Hours Tracker");
 
+  const Logic = globalThis.AttendanceLogic;
+  if (!Logic) {
+    throw new Error("Attendance calculation helpers were not loaded.");
+  }
+
   // ── Expose presence marker for the website to detect ──────────────────────
   // The tracker site checks for this attribute to know the extension is installed.
   document.documentElement.dataset.whtExtension = "true";
   window.dispatchEvent(new CustomEvent("wht-extension-ready"));
-
-  /**
-   * Convert "HH:MM" string to decimal hours (e.g., "09:30" → 9.5).
-   */
-  function timeToDecimalHours(timeStr) {
-    if (!timeStr) return 0;
-    const [h, m] = timeStr.split(":").map(Number);
-    return h + (m / 60);
-  }
 
   /**
    * Simulate user input on an element — triggers 'input' and 'change' events
@@ -121,24 +117,33 @@
   }
 
   /**
+   * Clear a day's visible tracker UI when a refreshed extraction no longer has
+   * data for that day.
+   */
+  async function clearDay(day) {
+    const typeSelect = document.querySelector(`#type-${day}`);
+    if (!typeSelect) return { day, success: false, skipped: true };
+    simulateInput(typeSelect, "");
+    await new Promise(r => setTimeout(r, 50));
+    return { day, success: true, cleared: true };
+  }
+
+  /**
    * Also update localStorage directly as a safety net.
    * The tracker stores week data under "wht_weekdata_v1".
    */
-  function updateLocalStorage(attendanceData) {
+  function updateLocalStorage(attendanceData, refreshDays) {
     try {
       const WEEK_KEY = "wht_weekdata_v1";
       const existing = JSON.parse(localStorage.getItem(WEEK_KEY) || "{}");
+      const merged = Logic.mergeTrackerWeekData({
+        existing,
+        attendanceData,
+        refreshDays,
+      });
 
-      for (const [day, timeStr] of Object.entries(attendanceData)) {
-        const decimalHours = timeToDecimalHours(timeStr);
-        existing[day] = {
-          type: "worked",
-          hours: decimalHours,
-        };
-      }
-
-      localStorage.setItem(WEEK_KEY, JSON.stringify(existing));
-      console.log("[WHT Bridge] ✅ localStorage updated:", existing);
+      localStorage.setItem(WEEK_KEY, JSON.stringify(merged));
+      console.log("[WHT Bridge] ✅ localStorage updated:", merged);
       return true;
     } catch (err) {
       console.error("[WHT Bridge] Failed to update localStorage:", err);
@@ -149,24 +154,46 @@
   // ── Message Listener ──────────────────────────────────────────────────────
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === "GET_TRACKER_CONFIG") {
+      try {
+        const raw = localStorage.getItem("wht_config_v1");
+        sendResponse({
+          success: true,
+          config: raw ? JSON.parse(raw) : null,
+        });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+      return false;
+    }
+
     if (message.action !== "FILL_TRACKER") return false;
 
     console.log("[WHT Bridge] Received FILL_TRACKER message:", message.data);
 
     const attendanceData = message.data;
+    const refreshDays = Array.isArray(message.refreshDays)
+      ? message.refreshDays
+      : Object.keys(attendanceData || {});
     if (!attendanceData || typeof attendanceData !== "object") {
       sendResponse({ success: false, error: "Invalid data received" });
       return false;
     }
 
-    // Update localStorage first (immediate, reliable)
-    const storageOk = updateLocalStorage(attendanceData);
-
-    // Then fill the UI (visual confirmation)
     const days = Object.entries(attendanceData);
     const results = [];
 
     (async () => {
+      const importedDays = new Set(Object.keys(attendanceData));
+      for (const day of refreshDays) {
+        if (!importedDays.has(day)) {
+          await clearDay(day);
+        }
+      }
+
+      // Persist after clearing UI controls so UI change handlers cannot restore stale values.
+      const storageOk = updateLocalStorage(attendanceData, refreshDays);
+
       for (const [day, timeStr] of days) {
         const result = await fillDay(day, timeStr);
         results.push(result);
