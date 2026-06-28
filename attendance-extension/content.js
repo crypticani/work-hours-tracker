@@ -2,12 +2,15 @@
  * content.js — HRMS Attendance Page Scraper
  *
  * Injected into the HRMS attendance page via chrome.scripting.executeScript.
- * Parses the attendance table, extracts day + Final Login, and returns
- * structured data back to the popup.
+ * Parses the attendance table, extracts day + Final Login + Leaves + Type +
+ * Category Code, and returns structured data back to the popup.
  *
  * KEY DESIGN: Data is now keyed by ISO date (YYYY-MM-DD) rather than
  * weekday name alone. This enables month-boundary filtering — when a
  * work week spans two months, only days in the CURRENT month are included.
+ *
+ * v1.4 — Enhanced to extract Leave/ATR columns, detect department,
+ *         capture pending days, and provide month-end analysis data.
  *
  * This script is NOT auto-injected — it's executed on-demand when the user
  * clicks "Fetch Attendance" in the popup.
@@ -33,11 +36,79 @@
     "day", "shift day", "week day", "weekday"
   ];
 
+  // ── New column identifiers for Leave/ATR support ──
+  const LEAVES_IDS = [
+    "leaves", "leave", "leave status", "leave type"
+  ];
+
+  const TYPE_IDS = [
+    "type", "leave duration", "duration"
+  ];
+
+  const CATEGORY_CODE_IDS = [
+    "category code", "category_code", "categorycode", "atr", "atr code"
+  ];
+
+  const WEEK_OFF_IDS = [
+    "week off", "weekoff", "week_off", "weekly off"
+  ];
+
   const Logic = globalThis.AttendanceLogic;
   if (!Logic) {
     throw new Error("Attendance calculation helpers were not loaded.");
   }
   const WORK_POLICY = Logic.resolveWorkPolicy(globalThis.__WHT_POLICY);
+
+  // ── Department Extraction ─────────────────────────────────────────────────
+
+  /**
+   * Extract the selected department from the HRMS page.
+   * Searches for <select> dropdowns or visible text containing department info.
+   * @returns {string|null} Department name or null
+   */
+  function extractDepartment() {
+    // Strategy 1: Find <select> with department-related id/name/label
+    const selectors = [
+      "select[id*='department' i]",
+      "select[name*='department' i]",
+      "select[id*='dept' i]",
+      "select[name*='dept' i]",
+    ];
+
+    for (const sel of selectors) {
+      const select = document.querySelector(sel);
+      if (select && select.value) {
+        console.log(`[HRMS Extractor] ✅ Found department via select: "${select.value}"`);
+        return select.value.trim();
+      }
+    }
+
+    // Strategy 2: Find label text "Department" near a select/input
+    const labels = document.querySelectorAll("label, span, div, th, td");
+    for (const el of labels) {
+      const text = el.textContent?.trim();
+      if (!text) continue;
+      if (/^select\s*department$/i.test(text) || /^department$/i.test(text)) {
+        // Check sibling or child select
+        const parent = el.closest("div, td, th, fieldset, section");
+        if (parent) {
+          const select = parent.querySelector("select");
+          if (select && select.value) {
+            console.log(`[HRMS Extractor] ✅ Found department via label: "${select.value}"`);
+            return select.value.trim();
+          }
+          // Check for a visible text value (non-select display)
+          const valueEl = parent.querySelector(".value, .selected, [class*='selected']");
+          if (valueEl && valueEl.textContent?.trim()) {
+            return valueEl.textContent.trim();
+          }
+        }
+      }
+    }
+
+    console.log("[HRMS Extractor] ⚠️ Could not detect department");
+    return null;
+  }
 
   // ── Today Login Extraction ────────────────────────────────────────────────
 
@@ -205,10 +276,15 @@
     // Extract today's login time from the page header
     const todayLogin = extractTodayLogin();
 
+    // Extract department from the page controls
+    const department = extractDepartment();
+
     const result = {
       success: false,
-      // Date-keyed data → { "2026-04-28": { day: "Mon", date: "28/04/2026", time: "09:45", display: "28 Apr (Mon)" }, ... }
+      // Date-keyed data → { "2026-04-28": { day: "Mon", date: "28/04/2026", time: "09:45", ... }, ... }
       entries: {},
+      // Full month entries (for month-end analysis)
+      allEntries: {},
       // Legacy day-keyed data for backward compat with tracker → { "Mon": "09:45", ... }
       data: {},
       rawRows: [],
@@ -233,9 +309,12 @@
         validDatesList: validDates.map(d => Logic.toISODate(d)),
         refreshDays: Object.keys(validIsoByDay),
         excludedDates,
+        department,
       },
       // Weekly summary computed after extraction
       summary: null,
+      // Month-end analysis
+      monthAnalysis: null,
     };
 
     // Find the attendance table
@@ -254,13 +333,21 @@
     // Find column indices
     let dateIdx = -1;
     let dayIdx = -1;
+    let leavesIdx = -1;
+    let typeIdx = -1;
+    let categoryCodeIdx = -1;
+    let weekOffIdx = -1;
 
     if (headerCells.length > 0) {
       dateIdx = findColIndex(headerCells, DATE_IDS);
       dayIdx = findColIndex(headerCells, DAY_IDS);
+      leavesIdx = findColIndex(headerCells, LEAVES_IDS);
+      typeIdx = findColIndex(headerCells, TYPE_IDS);
+      categoryCodeIdx = findColIndex(headerCells, CATEGORY_CODE_IDS);
+      weekOffIdx = findColIndex(headerCells, WEEK_OFF_IDS);
     }
 
-    console.log(`[HRMS Extractor] Column indices — Date: ${dateIdx}, Day: ${dayIdx}, Final Login: ${finalLoginIdx}`);
+    console.log(`[HRMS Extractor] Column indices — Date: ${dateIdx}, Day: ${dayIdx}, Final Login: ${finalLoginIdx}, Leaves: ${leavesIdx}, Type: ${typeIdx}, Category Code: ${categoryCodeIdx}, Week Off: ${weekOffIdx}`);
 
     // If Final Login column not identified, try to auto-detect time columns
     let effectiveFinalLoginIdx = finalLoginIdx;
@@ -313,8 +400,18 @@
       const timeVal = cells[effectiveFinalLoginIdx]
         ? cells[effectiveFinalLoginIdx].textContent.trim() : null;
 
-      // Skip completely empty rows
-      if (!timeVal && !dateVal && !dayVal) continue;
+      // ── Extract new columns ──
+      const leavesVal = leavesIdx !== -1 && cells[leavesIdx]
+        ? cells[leavesIdx].textContent.trim() : null;
+      const typeVal = typeIdx !== -1 && cells[typeIdx]
+        ? cells[typeIdx].textContent.trim() : null;
+      const categoryCodeVal = categoryCodeIdx !== -1 && cells[categoryCodeIdx]
+        ? cells[categoryCodeIdx].textContent.trim() : null;
+      const weekOffVal = weekOffIdx !== -1 && cells[weekOffIdx]
+        ? cells[weekOffIdx].textContent.trim() : null;
+
+      // Skip completely empty rows (no date, no day, no data at all)
+      if (!timeVal && !dateVal && !dayVal && !leavesVal && !categoryCodeVal) continue;
 
       // Parse the date
       let parsedDate = Logic.parseDateStrict(dateVal);
@@ -339,8 +436,15 @@
 
       const convertedTime = Logic.convertWorkedTime(timeVal);
 
+      // Check if this is a weekend (Week Off)
+      const isWeekOff = weekOffVal && weekOffVal.toLowerCase() === "yes";
+      const isWeekend = isWeekOff || (parsedDate ? (parsedDate.getDay() === 0 || parsedDate.getDay() === 6) : false);
+
       // Is this date in our valid set?
       const isValidDate = isoDate ? validDateSet.has(isoDate) : false;
+
+      // Determine if this is a Saturday
+      const isSaturday = dayName === "Sat" || (parsedDate && parsedDate.getDay() === 6);
 
       // Store raw row for debugging
       result.rawRows.push({
@@ -350,33 +454,96 @@
         rawTime: timeVal,
         convertedTime,
         isValidDate,
-        isWeekend: parsedDate ? (parsedDate.getDay() === 0 || parsedDate.getDay() === 6) : false,
+        isWeekend,
+        leaves: leavesVal || null,
+        leaveType: typeVal || null,
+        categoryCode: categoryCodeVal || null,
+        weekOff: isWeekOff,
       });
 
-      // Skip if no valid time
-      if (!convertedTime) continue;
+      // ── Build enriched entry ──
+      const enrichedEntry = {
+        day: dayName,
+        date: dateVal,
+        time: convertedTime,
+        rawFinalLogin: timeVal || null,
+        leaves: (leavesVal && leavesVal.length > 0) ? leavesVal : null,
+        leaveType: (typeVal && typeVal.length > 0) ? typeVal : null,
+        categoryCode: (categoryCodeVal && categoryCodeVal.length > 0) ? categoryCodeVal : null,
+        weekOff: isWeekOff,
+        display: parsedDate ? Logic.formatDateDisplay(parsedDate) : isoDate,
+      };
 
-      // Only include dates that are in the valid set (current week + current month)
-      if (!isValidDate) continue;
-
-      // Store date-keyed entry
-      if (isoDate) {
-        result.entries[isoDate] = {
-          day: dayName,
-          date: dateVal,
-          time: convertedTime,
-          display: parsedDate ? Logic.formatDateDisplay(parsedDate) : isoDate,
-        };
+      // ── Store in allEntries (full month, for month-end analysis) ──
+      // Include all rows that are in the current month, including weekends/pending
+      if (isoDate && parsedDate &&
+          parsedDate.getMonth() === currentMonth &&
+          parsedDate.getFullYear() === currentYear) {
+        // Skip Sundays (Week Off) from allEntries — they're not working days
+        if (!isWeekOff) {
+          result.allEntries[isoDate] = enrichedEntry;
+        }
       }
 
-      // Legacy: store day-keyed data (last occurrence wins)
-      result.data[dayName] = convertedTime;
-      result.meta.validRowsExtracted++;
+      // ── Determine if this row should be in current-week entries ──
+      // Previously: skip if no convertedTime
+      // Now: include if it's a valid date AND is a working day
+      //   - Has worked hours → include
+      //   - Has leaves/categoryCode → include (Leave/ATR day)
+      //   - Has nothing (pending) → include so we can flag it
+      //   - Skip Sundays (Week Off)
+      if (!isValidDate) continue;
+      if (isWeekOff) continue;
+
+      // Store date-keyed entry (current week, within month)
+      if (isoDate) {
+        result.entries[isoDate] = enrichedEntry;
+      }
+
+      // Legacy: store day-keyed data (only for rows with actual worked time)
+      if (convertedTime) {
+        result.data[dayName] = convertedTime;
+        result.meta.validRowsExtracted++;
+      }
     }
 
-    result.success = Object.keys(result.data).length > 0;
+    // ── Handle auto-credit Saturdays for non-DevOps ──
+    // For non-DevOps departments, ensure ALL Saturdays in the month get WFH entries
+    // even if not explicitly in the HRMS table
+    if (department && !Logic.isDevOpsDepartment(department)) {
+      // Find all Saturdays in the current month
+      const firstDay = new Date(currentYear, currentMonth, 1);
+      const lastDay = new Date(currentYear, currentMonth + 1, 0);
 
-    // ── Compute Weekly Summary ──────────────────────────────────────────────
+      for (let d = new Date(firstDay); d <= lastDay; d.setDate(d.getDate() + 1)) {
+        if (d.getDay() === 6) { // Saturday
+          const satIso = Logic.toISODate(d);
+          // Only add if not already present
+          if (!result.allEntries[satIso]) {
+            result.allEntries[satIso] = {
+              day: "Sat",
+              date: null,
+              time: null,
+              rawFinalLogin: null,
+              leaves: "Work From Home",
+              leaveType: "Full Day",
+              categoryCode: null,
+              weekOff: false,
+              display: Logic.formatDateDisplay(d),
+            };
+          }
+
+          // Also add to current week entries if it's a valid date
+          if (validDateSet.has(satIso) && !result.entries[satIso]) {
+            result.entries[satIso] = result.allEntries[satIso];
+          }
+        }
+      }
+    }
+
+    result.success = Object.keys(result.entries).length > 0;
+
+    // ── Compute Weekly Summary (enhanced) ──────────────────────────────────
 
     if (result.success) {
       result.summary = Logic.computeAttendanceSummary({
@@ -384,6 +551,18 @@
         data: result.data,
         todayLogin,
         context: weekContext,
+        department,
+      });
+    }
+
+    // ── Compute Month-End Analysis ──────────────────────────────────────────
+
+    if (Object.keys(result.allEntries).length > 0) {
+      result.monthAnalysis = Logic.computeMonthEndAnalysis({
+        allEntries: result.allEntries,
+        policy: WORK_POLICY,
+        department,
+        today: new Date(),
       });
     }
 
@@ -408,6 +587,7 @@
     extractionResult = {
       success: false,
       entries: {},
+      allEntries: {},
       data: {},
       rawRows: [],
       errors: [err?.message || "Attendance extraction failed."],
@@ -417,8 +597,10 @@
         pageTitle: document.title,
         pageUrl: window.location.href,
         extractedAt: new Date().toISOString(),
+        department: null,
       },
       summary: null,
+      monthAnalysis: null,
     };
   }
 

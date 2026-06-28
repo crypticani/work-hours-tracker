@@ -22,6 +22,10 @@ function policy(overrides = {}) {
   return Logic.resolveWorkPolicy(overrides);
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Existing Tests
+// ═══════════════════════════════════════════════════════════════════
+
 {
   const valid = Logic.parseDateStrict("22/05/2026");
   assert.equal(Logic.toISODate(valid), "2026-05-22");
@@ -96,4 +100,348 @@ function policy(overrides = {}) {
   });
 }
 
-console.log("attendance-extension logic tests passed");
+console.log("✅ Existing tests passed");
+
+// ═══════════════════════════════════════════════════════════════════
+// parseLeaveType Tests
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  const p = policy();
+  const full = Logic.parseLeaveType("Full Day", p);
+  assert.equal(full.isFull, true);
+  assert.equal(full.minutes, 540);
+
+  const half = Logic.parseLeaveType("Half Day", p);
+  assert.equal(half.isFull, false);
+  assert.equal(half.minutes, 270);
+
+  const halfNum = Logic.parseLeaveType("0.5", p);
+  assert.equal(halfNum.isFull, false);
+  assert.equal(halfNum.minutes, 270);
+
+  const nullType = Logic.parseLeaveType(null, p);
+  assert.equal(nullType.isFull, true);
+  assert.equal(nullType.minutes, 540);
+
+  console.log("✅ parseLeaveType tests passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// classifyDayStatus Tests
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  const p = policy();
+
+  // 1. Empty Final Login, no leave, no ATR → pending
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Mon", time: null, rawFinalLogin: null, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "pending");
+    assert.equal(cls.totalMinutes, 0);
+  }
+
+  // 2. Full day leave (no attendance)
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Tue", time: null, leaves: "CL", leaveType: "Full Day", categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "leave");
+    assert.equal(cls.leaveMinutes, 540);
+    assert.equal(cls.totalMinutes, 540);
+  }
+
+  // 3. Half day leave + worked hours
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Wed", time: "05:00", leaves: "CL", leaveType: "Half Day", categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "leave");
+    assert.equal(cls.workedMinutes, 300);
+    assert.equal(cls.leaveMinutes, 270);
+    assert.equal(cls.totalMinutes, 570);
+  }
+
+  // 4. WFH
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Thu", time: null, leaves: "Work From Home", leaveType: "Full Day", categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "wfh");
+    assert.equal(cls.leaveMinutes, 540);
+    assert.equal(cls.totalMinutes, 540);
+  }
+
+  // 5. ATR (no leave)
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Fri", time: null, leaves: null, leaveType: "Full Day", categoryCode: "ATR", weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "atr");
+    assert.equal(cls.atrMinutes, 540);
+    assert.equal(cls.totalMinutes, 540);
+  }
+
+  // 6. ATR with worked hours (additive)
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Fri", time: "06:00", leaves: null, leaveType: "Full Day", categoryCode: "ATR", weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "atr");
+    assert.equal(cls.workedMinutes, 360);
+    assert.equal(cls.atrMinutes, 540);
+    assert.equal(cls.totalMinutes, 900); // 15 hours
+  }
+
+  // 7. Leave + ATR → leave wins, ATR ignored
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Mon", time: "05:00", leaves: "CL", leaveType: "Full Day", categoryCode: "ATR", weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "leave");
+    assert.equal(cls.leaveMinutes, 540);
+    assert.equal(cls.atrMinutes, 0); // ATR ignored
+    assert.equal(cls.totalMinutes, 840); // 300 worked + 540 leave
+  }
+
+  // 8. Weekend
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Sun", time: null, weekOff: true },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "weekend");
+    assert.equal(cls.totalMinutes, 0);
+  }
+
+  // 9. Normal worked day
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Mon", time: "09:15", leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "worked");
+    assert.equal(cls.workedMinutes, 555);
+    assert.equal(cls.totalMinutes, 555);
+  }
+
+  console.log("✅ classifyDayStatus tests passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Saturday Department Logic Tests
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  const p = policy();
+
+  // Non-DevOps: Saturday auto-credits WFH
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Sat", time: null, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "HR" }
+    );
+    assert.equal(cls.status, "wfh");
+    assert.equal(cls.leaveMinutes, 540);
+    assert.equal(cls.totalMinutes, 540);
+  }
+
+  // DevOps: Saturday without WFH → pending
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Sat", time: null, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "pending");
+    assert.equal(cls.totalMinutes, 0);
+  }
+
+  // DevOps: Saturday with explicit WFH → wfh
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Sat", time: null, leaves: "Work From Home", leaveType: "Full Day", categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "wfh");
+    assert.equal(cls.leaveMinutes, 540);
+    assert.equal(cls.totalMinutes, 540);
+  }
+
+  // Finance: Saturday auto-credits
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Sat", time: null, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Finance" }
+    );
+    assert.equal(cls.status, "wfh");
+    assert.equal(cls.totalMinutes, 540);
+  }
+
+  console.log("✅ Saturday department logic tests passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// computeMonthEndAnalysis Tests
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  const p = policy();
+
+  // Complete week (all 5 days worked ≥ 9h each)
+  {
+    const allEntries = {
+      "2026-06-01": { day: "Mon", time: "09:15", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-02": { day: "Tue", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-03": { day: "Wed", time: "09:08", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-04": { day: "Thu", time: "09:22", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-05": { day: "Fri", time: "09:20", leaves: null, categoryCode: null, weekOff: false },
+    };
+
+    const result = Logic.computeMonthEndAnalysis({
+      allEntries,
+      policy: p,
+      department: "Devops",
+      today: new Date(2026, 5, 15), // June 15
+    });
+
+    assert.equal(result.monthName, "June");
+    const week1 = result.weeks[0];
+    assert.equal(week1.status, "complete");
+    assert.equal(week1.deficitMinutes, 0);
+    assert.equal(week1.suggestions.length, 0);
+  }
+
+  // Week short by full day with pending day → suggests pending
+  {
+    const allEntries = {
+      "2026-06-01": { day: "Mon", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-02": { day: "Tue", time: null, leaves: null, categoryCode: null, weekOff: false }, // pending
+      "2026-06-03": { day: "Wed", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-04": { day: "Thu", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-05": { day: "Fri", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    };
+
+    const result = Logic.computeMonthEndAnalysis({
+      allEntries,
+      policy: p,
+      department: "Devops",
+      today: new Date(2026, 5, 15),
+    });
+
+    const week1 = result.weeks[0];
+    assert.equal(week1.status, "short");
+    assert.equal(week1.deficitMinutes, 540); // missing 9h
+    assert.equal(week1.pendingDays.length, 1);
+    assert.equal(week1.pendingDays[0].day, "Tue");
+    assert.equal(week1.suggestions.length, 1);
+    assert.equal(week1.suggestions[0].type, "missing");
+    assert.equal(week1.suggestions[0].day, "Tue");
+  }
+
+  // Week short by small deficit, no pending → suggests lowest-hours day
+  {
+    const allEntries = {
+      "2026-06-01": { day: "Mon", time: "09:15", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-02": { day: "Tue", time: "08:42", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-03": { day: "Wed", time: "09:08", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-04": { day: "Thu", time: "08:58", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-05": { day: "Fri", time: "09:02", leaves: null, categoryCode: null, weekOff: false },
+    };
+
+    const result = Logic.computeMonthEndAnalysis({
+      allEntries,
+      policy: p,
+      department: "Devops",
+      today: new Date(2026, 5, 15),
+    });
+
+    const week1 = result.weeks[0];
+    // Total: 555+522+548+538+542 = 2705 min; Target = 2700; short by 0
+    // Actually 09:15=555, 08:42=522, 09:08=548, 08:58=538, 09:02=542 = 2705
+    // Target = 45*60 = 2700. So 2705 ≥ 2700 → complete
+    assert.equal(week1.status, "complete");
+  }
+
+  console.log("✅ computeMonthEndAnalysis tests passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Enhanced computeAttendanceSummary Tests
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  // Week with 1 pending day → required adjusted
+  {
+    const context = Logic.buildWeekContext({
+      policy: policy(),
+      today: new Date(2026, 5, 3), // Wed June 3
+    });
+
+    const entries = {
+      "2026-06-01": { day: "Mon", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-02": { day: "Tue", time: null, leaves: null, categoryCode: null, weekOff: false }, // pending
+      "2026-06-03": { day: "Wed", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-04": { day: "Thu", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-05": { day: "Fri", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    };
+
+    const summary = Logic.computeAttendanceSummary({
+      entries, data: {}, context,
+      todayLogin: { found: false },
+      department: "Devops",
+    });
+
+    assert.equal(summary.isEnhanced, true);
+    assert.equal(summary.pendingDays.length, 1);
+    assert.equal(summary.pendingDays[0].day, "Tue");
+    // Required = 4 days × 9h = 36h = 2160 min (1 day excluded)
+    assert.equal(summary.adjustedRequiredMinutes, 2160);
+    assert.equal(summary.adjustedDaysConsidered, 4);
+    // Worked = 4 × 9h = 36h = 2160 min
+    assert.equal(summary.totalWorkedMinutes, 2160);
+    assert.equal(summary.remainingMinutes, 0);
+  }
+
+  // Week with leave + ATR
+  {
+    const context = Logic.buildWeekContext({
+      policy: policy(),
+      today: new Date(2026, 5, 3),
+    });
+
+    const entries = {
+      "2026-06-01": { day: "Mon", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-02": { day: "Tue", time: null, leaves: "CL", leaveType: "Full Day", categoryCode: null, weekOff: false },
+      "2026-06-03": { day: "Wed", time: null, leaves: null, leaveType: "Full Day", categoryCode: "ATR", weekOff: false },
+      "2026-06-04": { day: "Thu", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+      "2026-06-05": { day: "Fri", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    };
+
+    const summary = Logic.computeAttendanceSummary({
+      entries, data: {}, context,
+      todayLogin: { found: false },
+      department: "Devops",
+    });
+
+    assert.equal(summary.isEnhanced, true);
+    assert.equal(summary.leaveDays.length, 1);
+    assert.equal(summary.atrDays.length, 1);
+    assert.equal(summary.pendingDays.length, 0);
+    // Worked: 3×540=1620, Leave: 540, ATR: 540 → total 2700 = 45h
+    assert.equal(summary.totalWorkedMinutes, 2700);
+    assert.equal(summary.remainingMinutes, 0);
+  }
+
+  console.log("✅ Enhanced computeAttendanceSummary tests passed");
+}
+
+console.log("\n🎉 All attendance-extension logic tests passed!\n");

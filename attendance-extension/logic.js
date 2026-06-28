@@ -302,20 +302,444 @@
     return { entries, data, rawRows, validRowsExtracted };
   }
 
+  // ── Leave/ATR Classification Engine ──────────────────────────────────────
+
+  /**
+   * Parse the "Type" column value to determine full vs half day.
+   * @param {string} typeStr - "Full Day", "Half Day", etc.
+   * @param {Object} policy  - work policy for hour values
+   * @returns {{ isFull: boolean, minutes: number }}
+   */
+  function parseLeaveType(typeStr, policy) {
+    const p = policy || DEFAULT_WORK_POLICY;
+    const fullMinutes = Math.round(p.dailyWorkHours * 60);
+    const halfMinutes = Math.round(p.halfDayHours * 60);
+
+    if (!typeStr || typeof typeStr !== "string") {
+      return { isFull: true, minutes: fullMinutes };
+    }
+
+    const lower = typeStr.trim().toLowerCase();
+
+    if (lower.includes("half")) {
+      return { isFull: false, minutes: halfMinutes };
+    }
+    if (lower === "0.5") {
+      return { isFull: false, minutes: halfMinutes };
+    }
+
+    // "Full Day", "1.0", any other value defaults to full
+    return { isFull: true, minutes: fullMinutes };
+  }
+
+  /**
+   * Check if a leaves value represents Work From Home.
+   * @param {string} leavesStr
+   * @returns {boolean}
+   */
+  function isWFH(leavesStr) {
+    if (!leavesStr || typeof leavesStr !== "string") return false;
+    const lower = leavesStr.trim().toLowerCase();
+    return lower.includes("work from home") || lower === "wfh";
+  }
+
+  /**
+   * Check if a department string is DevOps.
+   * @param {string} dept
+   * @returns {boolean}
+   */
+  function isDevOpsDepartment(dept) {
+    if (!dept || typeof dept !== "string") return false;
+    const trimmed = dept.trim();
+    return trimmed === "DevOps" || trimmed === "Devops";
+  }
+
+  /**
+   * Classify a single day's attendance status.
+   *
+   * Decision order:
+   *   1. Weekend (weekOff) → skip
+   *   2. Saturday department rules
+   *   3. Leaves present → leave/wfh (priority over ATR)
+   *   4. Category Code present → ATR
+   *   5. Final Login present → worked
+   *   6. Nothing → pending
+   *
+   * @param {Object} entry   - enriched entry from content.js
+   * @param {Object} policy  - work policy
+   * @param {Object} options - { department: string }
+   * @returns {Object} classification result
+   */
+  function classifyDayStatus(entry, policy, options) {
+    const p = policy || DEFAULT_WORK_POLICY;
+    const opts = options || {};
+    const dept = opts.department || "";
+
+    const result = {
+      status: "pending",
+      isFull: true,
+      workedMinutes: 0,
+      leaveMinutes: 0,
+      atrMinutes: 0,
+      totalMinutes: 0,
+      label: "Pending",
+    };
+
+    if (!entry) return result;
+
+    // 1. Weekend
+    if (entry.weekOff) {
+      result.status = "weekend";
+      result.label = "Weekend";
+      return result;
+    }
+
+    // Determine if this is a Saturday
+    const daySaturday = entry.day === "Sat" ||
+      (typeof entry.day === "string" && entry.day.toLowerCase().startsWith("sat"));
+
+    // Calculate worked minutes from Final Login if present
+    const workedMins = entry.time ? timeToMinutes(entry.time) : 0;
+
+    // 2. Saturday department rules
+    if (daySaturday) {
+      if (!isDevOpsDepartment(dept)) {
+        // Non-DevOps: ALL Saturdays auto-credit WFH
+        const lt = parseLeaveType(entry.leaveType, p);
+        result.status = "wfh";
+        result.isFull = lt.isFull;
+        result.leaveMinutes = lt.minutes;
+        result.workedMinutes = workedMins;
+        result.totalMinutes = workedMins + lt.minutes;
+        result.label = `WFH (${lt.isFull ? "Full Day" : "Half Day"})`;
+        return result;
+      }
+      // DevOps: need explicit WFH / Leave in HRMS
+      // (falls through to normal leave/ATR/pending logic below)
+    }
+
+    // 3. Leaves present (takes priority over ATR)
+    if (entry.leaves && typeof entry.leaves === "string" && entry.leaves.trim()) {
+      const lt = parseLeaveType(entry.leaveType, p);
+
+      if (isWFH(entry.leaves)) {
+        result.status = "wfh";
+        result.label = `WFH (${lt.isFull ? "Full Day" : "Half Day"})`;
+      } else {
+        result.status = "leave";
+        result.label = `Leave (${lt.isFull ? "Full Day" : "Half Day"})`;
+      }
+
+      result.isFull = lt.isFull;
+      result.leaveMinutes = lt.minutes;
+      result.workedMinutes = workedMins;
+      result.totalMinutes = workedMins + lt.minutes;
+      return result;
+    }
+
+    // 4. Category Code present (ATR), only when no leave
+    if (entry.categoryCode && typeof entry.categoryCode === "string" && entry.categoryCode.trim()) {
+      const lt = parseLeaveType(entry.leaveType, p);
+
+      result.status = "atr";
+      result.isFull = lt.isFull;
+      result.atrMinutes = lt.minutes;
+      result.workedMinutes = workedMins;
+      result.totalMinutes = workedMins + lt.minutes;
+      result.label = `ATR (${lt.isFull ? "Full Day" : "Half Day"})`;
+      return result;
+    }
+
+    // 5. Final Login has valid time → worked
+    if (entry.time && workedMins > 0) {
+      result.status = "worked";
+      result.workedMinutes = workedMins;
+      result.totalMinutes = workedMins;
+      result.label = "Worked";
+      return result;
+    }
+
+    // 6. Nothing present → pending Leave/ATR
+    result.status = "pending";
+    result.label = "Pending Leave/ATR";
+    return result;
+  }
+
+  /**
+   * Generate all Mon–Sun week boundaries that overlap a given month.
+   * Each week is clipped to only include working days within the month.
+   *
+   * @param {number} month - 0-indexed month
+   * @param {number} year
+   * @param {Object} policy
+   * @returns {Array<{ weekNumber: number, dates: Date[], startDate: string, endDate: string }>}
+   */
+  function generateMonthWeeks(month, year, policy) {
+    const p = policy || DEFAULT_WORK_POLICY;
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0); // last day of month
+
+    // Find the Monday of the week containing the 1st
+    const firstMonday = getMonday(firstDay);
+
+    const weeks = [];
+    let weekStart = new Date(firstMonday);
+    let weekNum = 1;
+
+    while (weekStart <= lastDay) {
+      const weekDates = [];
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekStart);
+        d.setDate(weekStart.getDate() + i);
+        d.setHours(0, 0, 0, 0);
+
+        // Only include if within the target month
+        if (d.getMonth() !== month || d.getFullYear() !== year) continue;
+
+        // Only include configured working days
+        const dayName = ALL_DAYS[(d.getDay() + 6) % 7];
+        if (p.workingDays.includes(dayName)) {
+          weekDates.push(d);
+        }
+      }
+
+      if (weekDates.length > 0) {
+        weeks.push({
+          weekNumber: weekNum,
+          dates: weekDates,
+          startDate: toISODate(weekDates[0]),
+          endDate: toISODate(weekDates[weekDates.length - 1]),
+        });
+        weekNum++;
+      }
+
+      // Advance to next Monday
+      weekStart.setDate(weekStart.getDate() + 7);
+    }
+
+    return weeks;
+  }
+
+  /**
+   * Perform month-end analysis: classify each day, compute per-week totals,
+   * detect deficits, and generate Leave/ATR suggestions.
+   *
+   * @param {Object} input
+   * @param {Object} input.allEntries - date-keyed entries for the full month
+   * @param {Object} input.policy     - work policy
+   * @param {string} input.department - department name
+   * @param {Date}   input.today      - current date
+   * @returns {Object} month-end analysis result
+   */
+  function computeMonthEndAnalysis(input) {
+    const allEntries = input.allEntries || {};
+    const policy = resolveWorkPolicy(input.policy);
+    const dept = input.department || "";
+    const today = input.today ? new Date(input.today) : new Date();
+
+    const month = today.getMonth();
+    const year = today.getFullYear();
+
+    const weeks = generateMonthWeeks(month, year, policy);
+    const analysisWeeks = [];
+
+    for (const week of weeks) {
+      const dayResults = [];
+      let totalWorked = 0;
+      let totalLeave = 0;
+      let totalATR = 0;
+      const pendingDays = [];
+
+      for (const date of week.dates) {
+        const isoDate = toISODate(date);
+        const dayName = ALL_DAYS[(date.getDay() + 6) % 7];
+        const entry = allEntries[isoDate] || { day: dayName, time: null };
+
+        // Ensure entry has day name
+        const entryWithDay = { ...entry, day: entry.day || dayName };
+
+        const classification = classifyDayStatus(entryWithDay, policy, { department: dept });
+
+        dayResults.push({
+          isoDate,
+          day: dayName,
+          date: date,
+          ...classification,
+        });
+
+        if (classification.status === "pending") {
+          pendingDays.push({ isoDate, day: dayName });
+        } else if (classification.status !== "weekend") {
+          totalWorked += classification.workedMinutes;
+          totalLeave += classification.leaveMinutes;
+          totalATR += classification.atrMinutes;
+        }
+      }
+
+      const workingDayCount = week.dates.length;
+      const targetMinutes = Math.round(workingDayCount * policy.dailyWorkHours * 60);
+      const totalMinutes = totalWorked + totalLeave + totalATR;
+      const deficitMinutes = Math.max(0, targetMinutes - totalMinutes);
+
+      // Generate suggestions
+      const suggestions = [];
+
+      if (deficitMinutes > 0) {
+        // Step 1: Suggest pending days first (entire missing days)
+        for (const pd of pendingDays) {
+          suggestions.push({
+            isoDate: pd.isoDate,
+            day: pd.day,
+            reason: "Missing day — apply Leave/ATR",
+            type: "missing",
+          });
+        }
+
+        // Step 2: If still short after suggesting all pending days as full-day credits,
+        // suggest the worked day with the lowest hours
+        const pendingCredit = pendingDays.length * Math.round(policy.dailyWorkHours * 60);
+        const remainingDeficit = deficitMinutes - pendingCredit;
+
+        if (remainingDeficit > 0) {
+          // Find worked days sorted by lowest hours
+          const workedDays = dayResults
+            .filter((d) => d.status === "worked")
+            .sort((a, b) => a.workedMinutes - b.workedMinutes);
+
+          if (workedDays.length > 0) {
+            const lowest = workedDays[0];
+            const lowestFormatted = formatMinutes(lowest.workedMinutes);
+            suggestions.push({
+              isoDate: lowest.isoDate,
+              day: lowest.day,
+              reason: `Lowest hours (${lowestFormatted}) — apply Leave/ATR`,
+              type: "low-hours",
+            });
+          }
+        }
+      }
+
+      const status = deficitMinutes <= 0 ? "complete" : "short";
+
+      analysisWeeks.push({
+        weekNumber: week.weekNumber,
+        startDate: week.startDate,
+        endDate: week.endDate,
+        days: dayResults,
+        workedMinutes: totalWorked,
+        leaveMinutes: totalLeave,
+        atrMinutes: totalATR,
+        totalMinutes,
+        workingDayCount,
+        targetMinutes,
+        deficitMinutes,
+        status,
+        pendingDays,
+        suggestions,
+      });
+    }
+
+    return {
+      monthName: MONTH_NAMES[month],
+      year,
+      weeks: analysisWeeks,
+    };
+  }
+
+  // ── Enhanced Attendance Summary ─────────────────────────────────────────
+
   function computeAttendanceSummary(input) {
     const entries = input.entries || {};
     const data = input.data || {};
     const context = input.context || buildWeekContext();
     const todayLogin = input.todayLogin || { found: false, time24: null, raw: null };
-    const workedTimes = Object.keys(entries).length > 0
-      ? Object.values(entries).map((entry) => entry.time)
-      : Object.values(data);
-    const { totalMinutes: workedMinutes, formatted: totalWorked } = sumHours(workedTimes);
+    const dept = input.department || "";
 
-    const requiredMinutes = Math.round(
-      context.validDates.length * context.policy.dailyWorkHours * 60
-    );
-    const remainingRawMinutes = requiredMinutes - workedMinutes;
+    // ── Classify each day ──
+    const dayClassifications = {};
+    const pendingDaysList = [];
+    const leaveDaysList = [];
+    const atrDaysList = [];
+    let adjustedWorkedMinutes = 0;
+    let adjustedLeaveMinutes = 0;
+    let adjustedATRMinutes = 0;
+    let pendingCount = 0;
+
+    const entryKeys = Object.keys(entries);
+    const hasEntries = entryKeys.length > 0;
+
+    if (hasEntries) {
+      for (const isoDate of entryKeys) {
+        const entry = entries[isoDate];
+        const classification = classifyDayStatus(entry, context.policy, { department: dept });
+        dayClassifications[isoDate] = classification;
+
+        if (classification.status === "pending") {
+          pendingCount++;
+          pendingDaysList.push({
+            isoDate,
+            day: entry.day,
+            display: entry.display || isoDate,
+          });
+        } else if (classification.status === "weekend") {
+          // skip
+        } else {
+          adjustedWorkedMinutes += classification.workedMinutes;
+          adjustedLeaveMinutes += classification.leaveMinutes;
+          adjustedATRMinutes += classification.atrMinutes;
+
+          if (classification.status === "leave" || classification.status === "wfh") {
+            leaveDaysList.push({
+              isoDate,
+              day: entry.day,
+              type: classification.isFull ? "full" : "half",
+              label: classification.label,
+              hours: classification.leaveMinutes / 60,
+              display: entry.display || isoDate,
+            });
+          }
+          if (classification.status === "atr") {
+            atrDaysList.push({
+              isoDate,
+              day: entry.day,
+              type: classification.isFull ? "full" : "half",
+              label: classification.label,
+              hours: classification.atrMinutes / 60,
+              display: entry.display || isoDate,
+            });
+          }
+        }
+      }
+    }
+
+    // ── Compute totals (enhanced) ──
+    // adjustedTotal includes worked + leave + ATR credits
+    const adjustedTotalMinutes = adjustedWorkedMinutes + adjustedLeaveMinutes + adjustedATRMinutes;
+
+    // For backward-compat: also compute original workedTimes-based values
+    const workedTimes = hasEntries
+      ? Object.values(entries).map((entry) => entry.time).filter(Boolean)
+      : Object.values(data);
+    const { totalMinutes: rawWorkedMinutes, formatted: rawTotalWorked } = sumHours(workedTimes);
+
+    // Use enhanced values if we have enriched entries, otherwise fall back to legacy
+    const useEnhanced = hasEntries && entryKeys.some((k) => {
+      const e = entries[k];
+      return e && (e.leaves !== undefined || e.categoryCode !== undefined || e.weekOff !== undefined);
+    });
+
+    const effectiveWorkedMinutes = useEnhanced ? adjustedTotalMinutes : rawWorkedMinutes;
+    const effectiveTotalWorked = useEnhanced ? formatMinutes(adjustedTotalMinutes) : rawTotalWorked;
+
+    // Adjusted required: exclude pending days from requirement
+    const adjustedDaysConsidered = context.validDates.length - pendingCount;
+    const adjustedRequiredMinutes = useEnhanced
+      ? Math.round(Math.max(0, adjustedDaysConsidered) * context.policy.dailyWorkHours * 60)
+      : Math.round(context.validDates.length * context.policy.dailyWorkHours * 60);
+
+    const requiredMinutes = adjustedRequiredMinutes;
+    const remainingRawMinutes = requiredMinutes - effectiveWorkedMinutes;
 
     let logoutTime = null;
     let logoutStatus = "no-login";
@@ -328,7 +752,15 @@
         todayRemainingMinutes = 0;
       } else {
         const todayIso = toISODate(context.today);
-        const futureDays = context.validDates.filter((d) => toISODate(d) > todayIso).length;
+        const futureDays = context.validDates.filter((d) => {
+          const iso = toISODate(d);
+          if (iso <= todayIso) return false;
+          // Also exclude future pending days from calculation
+          if (useEnhanced && dayClassifications[iso] && dayClassifications[iso].status === "pending") {
+            return false;
+          }
+          return true;
+        }).length;
         todayRemainingMinutes = remainingRawMinutes -
           Math.round(futureDays * context.policy.dailyWorkHours * 60);
         if (todayRemainingMinutes < 0) todayRemainingMinutes = 0;
@@ -342,8 +774,8 @@
     }
 
     return {
-      totalWorked,
-      totalWorkedMinutes: workedMinutes,
+      totalWorked: effectiveTotalWorked,
+      totalWorkedMinutes: effectiveWorkedMinutes,
       required: formatMinutes(requiredMinutes),
       requiredMinutes,
       remaining: formatMinutes(Math.max(0, remainingRawMinutes)),
@@ -351,11 +783,13 @@
       surplus: remainingRawMinutes < 0 ? formatMinutes(Math.abs(remainingRawMinutes)) : null,
       surplusMinutes: remainingRawMinutes < 0 ? Math.abs(remainingRawMinutes) : 0,
       daysConsidered: context.validDates.length,
-      daysWithData: Object.keys(entries).length || Object.keys(data).length,
+      daysWithData: useEnhanced
+        ? entryKeys.filter((k) => dayClassifications[k] && dayClassifications[k].status !== "pending" && dayClassifications[k].status !== "weekend").length
+        : (Object.keys(entries).length || Object.keys(data).length),
       dailyTarget: context.policy.dailyWorkHours,
       isMonthBoundary: context.isMonthBoundary,
       percentComplete: requiredMinutes > 0
-        ? Math.min(100, Math.round((workedMinutes / requiredMinutes) * 100))
+        ? Math.min(100, Math.round((effectiveWorkedMinutes / requiredMinutes) * 100))
         : 0,
       todayLoginTime: todayLogin.time24,
       todayLoginRaw: todayLogin.raw,
@@ -365,6 +799,17 @@
       todayRemainingFormatted: todayRemainingMinutes !== null
         ? formatMinutes(todayRemainingMinutes)
         : null,
+      // ── New enhanced fields ──
+      pendingDays: pendingDaysList,
+      leaveDays: leaveDaysList,
+      atrDays: atrDaysList,
+      dayClassifications,
+      adjustedWorkedMinutes,
+      adjustedLeaveMinutes,
+      adjustedATRMinutes,
+      adjustedRequiredMinutes,
+      adjustedDaysConsidered,
+      isEnhanced: useEnhanced,
     };
   }
 
@@ -407,5 +852,12 @@
     normalizeAttendanceRows,
     computeAttendanceSummary,
     mergeTrackerWeekData,
+    // ── New Leave/ATR functions ──
+    parseLeaveType,
+    isWFH,
+    isDevOpsDepartment,
+    classifyDayStatus,
+    generateMonthWeeks,
+    computeMonthEndAnalysis,
   };
 })();
