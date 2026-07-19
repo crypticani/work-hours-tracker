@@ -77,8 +77,10 @@ function policy(overrides = {}) {
 
   assert.equal(summary.totalWorked, "08:30");
   assert.equal(summary.required, "45:00");
-  assert.equal(summary.todayRemainingFormatted, "18:30");
-  assert.equal(summary.logoutTime, "28:00");
+  // Cumulative-through-today: only Wed present (Mon/Tue uncredited).
+  // Target through Wed = 3 × 9h = 27h; nothing credited before today → today needs 27h.
+  assert.equal(summary.todayRemainingFormatted, "27:00");
+  assert.equal(summary.logoutTime, "36:30");
 }
 
 {
@@ -552,6 +554,42 @@ console.log("✅ Existing tests passed");
   }
 
   console.log("✅ Enhanced computeAttendanceSummary tests passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Today's cumulative logout time
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  const context = Logic.buildWeekContext({
+    policy: policy(),
+    today: new Date(2026, 5, 2), // Tuesday, June 2 2026
+  });
+
+  const entries = {
+    "2026-06-01": { day: "Mon", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+  };
+
+  const summary = Logic.computeAttendanceSummary({
+    entries, data: {}, context,
+    todayLogin: { found: true, time24: "09:30", raw: "09:30 AM" },
+    department: "Devops",
+  });
+
+  // Target through Tuesday = 2 × 9h = 18h; Monday credits 9h; today needs 9h.
+  assert.equal(summary.logoutStatus, "ok");
+  assert.equal(summary.todayRemainingFormatted, "09:00");
+  assert.equal(summary.logoutTime, "18:30");
+
+  // No Today Login → card hidden
+  const noLogin = Logic.computeAttendanceSummary({
+    entries, data: {}, context,
+    todayLogin: { found: false, time24: null },
+    department: "Devops",
+  });
+  assert.equal(noLogin.logoutStatus, "no-login");
+
+  console.log("✅ Cumulative logout tests passed");
 }
 
 // ═══════════════════════════════════════════════════════════════════

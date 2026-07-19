@@ -793,31 +793,38 @@
     const requiredMinutes = adjustedRequiredMinutes;
     const remainingRawMinutes = requiredMinutes - effectiveWorkedMinutes;
 
+    // Today's logout is based on the CUMULATIVE target through today, not the
+    // full week. Working days elapsed (incl. today, current month only) × daily
+    // hours, minus what's already credited on earlier days this week.
     let logoutTime = null;
     let logoutStatus = "no-login";
     let todayRemainingMinutes = null;
 
     if (todayLogin.found && todayLogin.time24) {
       const loginTotalMinutes = timeToMinutes(todayLogin.time24);
-      if (remainingRawMinutes <= 0) {
-        logoutStatus = "done";
-        todayRemainingMinutes = 0;
-      } else {
-        const todayIso = toISODate(context.today);
-        const futureDays = context.validDates.filter((d) => {
-          const iso = toISODate(d);
-          if (iso <= todayIso) return false;
-          // Also exclude future pending days from calculation
-          if (useEnhanced && dayClassifications[iso] && dayClassifications[iso].status === "pending") {
-            return false;
-          }
-          return true;
-        }).length;
-        todayRemainingMinutes = remainingRawMinutes -
-          Math.round(futureDays * context.policy.dailyWorkHours * 60);
-        if (todayRemainingMinutes < 0) todayRemainingMinutes = 0;
+      const todayIso = toISODate(context.today);
+      const dailyMins = Math.round(context.policy.dailyWorkHours * 60);
 
-        const logoutTotalMinutes = loginTotalMinutes + todayRemainingMinutes;
+      const daysThroughToday = context.validDates.filter(
+        (d) => toISODate(d) <= todayIso
+      ).length;
+      const targetThroughToday = daysThroughToday * dailyMins;
+
+      let creditedBeforeToday = 0;
+      for (const d of context.validDates) {
+        const iso = toISODate(d);
+        if (iso >= todayIso) continue;
+        const cls = dayClassifications[iso];
+        creditedBeforeToday += cls ? cls.totalMinutes : 0;
+      }
+
+      const need = Math.max(0, targetThroughToday - creditedBeforeToday);
+      todayRemainingMinutes = need;
+
+      if (need <= 0) {
+        logoutStatus = "done";
+      } else {
+        const logoutTotalMinutes = loginTotalMinutes + need;
         const logoutH = Math.floor(logoutTotalMinutes / 60);
         const logoutM = logoutTotalMinutes % 60;
         logoutTime = `${String(logoutH).padStart(2, "0")}:${String(logoutM).padStart(2, "0")}`;
