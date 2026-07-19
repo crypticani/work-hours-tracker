@@ -170,6 +170,14 @@
     return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
   }
 
+  function hasLoginTime(timeStr, ignoreValues) {
+    if (!timeStr || typeof timeStr !== "string") return false;
+    const ignored = ignoreValues || DEFAULT_IGNORE_TIME_VALUES;
+    const trimmed = timeStr.trim();
+    if (!trimmed || ignored.includes(trimmed)) return false;
+    return /\d{1,2}:\d{2}/.test(trimmed);
+  }
+
   function timeToMinutes(timeStr) {
     if (!timeStr || typeof timeStr !== "string") return 0;
     const match = timeStr.trim().match(/^(\d+):(\d{2})$/);
@@ -352,6 +360,26 @@
     if (!dept || typeof dept !== "string") return false;
     const trimmed = dept.trim();
     return trimmed === "DevOps" || trimmed === "Devops";
+  }
+
+  /**
+   * Return a resolved policy, adding Saturday as a working day for DevOps.
+   * Keeps logic.js policy-driven; the department rule is applied by the caller
+   * (content.js) so unit tests remain unaffected.
+   */
+  function augmentPolicyForDepartment(policy, department) {
+    const resolved = resolveWorkPolicy(policy);
+    if (isDevOpsDepartment(department) && !resolved.workingDays.includes("Sat")) {
+      const workingDays = ALL_DAYS.filter(
+        (d) => resolved.workingDays.includes(d) || d === "Sat"
+      );
+      return {
+        ...resolved,
+        workingDays,
+        totalWeeklyHours: resolved.dailyWorkHours * workingDays.length,
+      };
+    }
+    return resolved;
   }
 
   /**
@@ -835,6 +863,8 @@
   globalThis.AttendanceLogic = {
     DEFAULT_WORK_POLICY,
     resolveWorkPolicy,
+    hasLoginTime,
+    augmentPolicyForDepartment,
     normalizeDayName,
     parseDateStrict,
     toISODate,

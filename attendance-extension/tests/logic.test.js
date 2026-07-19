@@ -444,4 +444,40 @@ console.log("✅ Existing tests passed");
   console.log("✅ Enhanced computeAttendanceSummary tests passed");
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// hasLoginTime + augmentPolicyForDepartment Tests
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  assert.equal(Logic.hasLoginTime("09:01:20 AM"), true);
+  assert.equal(Logic.hasLoginTime("09:51:31"), true);
+  assert.equal(Logic.hasLoginTime(""), false);
+  assert.equal(Logic.hasLoginTime(null), false);
+  assert.equal(Logic.hasLoginTime("00:00:00"), false);
+  assert.equal(Logic.hasLoginTime("-"), false);
+  console.log("✅ hasLoginTime tests passed");
+}
+
+{
+  const dev = Logic.augmentPolicyForDepartment(
+    { workingDays: ["Mon", "Tue", "Wed", "Thu", "Fri"], dailyWorkHours: 9 },
+    "Devops"
+  );
+  assert.deepEqual(plain(dev.workingDays), ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+  assert.equal(dev.totalWeeklyHours, 54);
+
+  const hr = Logic.augmentPolicyForDepartment(
+    { workingDays: ["Mon", "Tue", "Wed", "Thu", "Fri"], dailyWorkHours: 9 },
+    "HR"
+  );
+  assert.deepEqual(plain(hr.workingDays), ["Mon", "Tue", "Wed", "Thu", "Fri"]);
+
+  const already = Logic.augmentPolicyForDepartment(
+    { workingDays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], dailyWorkHours: 9 },
+    "Devops"
+  );
+  assert.deepEqual(plain(already.workingDays), ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]);
+  console.log("✅ augmentPolicyForDepartment tests passed");
+}
+
 console.log("\n🎉 All attendance-extension logic tests passed!\n");
