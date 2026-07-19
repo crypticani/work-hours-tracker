@@ -315,7 +315,7 @@
         const value = document.createElement("span");
         if (cls && cls.status === "pending") {
           value.className = "day-value pending";
-          value.textContent = "⏳ Pending";
+          value.textContent = cls.label ? `⏳ ${cls.label}` : "⏳ Pending";
           row.classList.add("pending-row");
         } else if (cls && (cls.status === "leave" || cls.status === "wfh")) {
           value.className = "day-value leave";
@@ -492,12 +492,13 @@
     }
 
     for (const pd of days) {
+      const meta = pendingActionMeta(pd.actionType);
       const item = document.createElement("div");
       item.className = "pending-item";
 
       const icon = document.createElement("span");
       icon.className = "pending-icon";
-      icon.textContent = "⏳";
+      icon.textContent = meta.icon;
 
       const info = document.createElement("div");
       info.className = "pending-info";
@@ -515,7 +516,7 @@
 
       const action = document.createElement("span");
       action.className = "pending-action";
-      action.textContent = "Needs Leave/ATR";
+      action.textContent = meta.action;
 
       item.appendChild(icon);
       item.appendChild(info);
@@ -524,6 +525,14 @@
     }
 
     showElement(pendingSection);
+  }
+
+  function pendingActionMeta(actionType) {
+    switch (actionType) {
+      case "atr-wfh": return { icon: "🏠", action: "File ATR (WFH)" };
+      case "wfh-leave-atr": return { icon: "📅", action: "Mark Saturday (WFH Leave/ATR)" };
+      default: return { icon: "⏳", action: "Apply Leave/ATR" };
+    }
   }
 
   // ── Month-End Analysis ────────────────────────────────────────────────────
