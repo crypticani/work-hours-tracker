@@ -562,6 +562,14 @@
     return weeks;
   }
 
+  function pendingReason(actionType) {
+    switch (actionType) {
+      case "atr-wfh": return "WFH (Leap login, no Bio) — file ATR";
+      case "wfh-leave-atr": return "Saturday — apply WFH Leave/ATR";
+      default: return "Missing day — apply Leave/ATR";
+    }
+  }
+
   /**
    * Perform month-end analysis: classify each day, compute per-week totals,
    * detect deficits, and generate Leave/ATR suggestions.
@@ -610,7 +618,7 @@
         });
 
         if (classification.status === "pending") {
-          pendingDays.push({ isoDate, day: dayName });
+          pendingDays.push({ isoDate, day: dayName, actionType: classification.actionType });
         } else if (classification.status !== "weekend") {
           totalWorked += classification.workedMinutes;
           totalLeave += classification.leaveMinutes;
@@ -632,8 +640,9 @@
           suggestions.push({
             isoDate: pd.isoDate,
             day: pd.day,
-            reason: "Missing day — apply Leave/ATR",
+            reason: pendingReason(pd.actionType),
             type: "missing",
+            actionType: pd.actionType || "leave-atr",
           });
         }
 
@@ -722,6 +731,8 @@
             isoDate,
             day: entry.day,
             display: entry.display || isoDate,
+            actionType: classification.actionType,
+            label: classification.label,
           });
         } else if (classification.status === "weekend") {
           // skip

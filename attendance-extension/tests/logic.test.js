@@ -450,6 +450,41 @@ console.log("✅ Existing tests passed");
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Saturday month-end analysis (6-day DevOps policy)
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  const p6 = Logic.resolveWorkPolicy({
+    workingDays: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    dailyWorkHours: 9,
+  });
+
+  const allEntries = {
+    "2026-06-01": { day: "Mon", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    "2026-06-02": { day: "Tue", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    "2026-06-03": { day: "Wed", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    "2026-06-04": { day: "Thu", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    "2026-06-05": { day: "Fri", time: "09:00", leaves: null, categoryCode: null, weekOff: false },
+    // 2026-06-06 Saturday intentionally missing → unmarked
+  };
+
+  const result = Logic.computeMonthEndAnalysis({
+    allEntries, policy: p6, department: "Devops", today: new Date(2026, 5, 6),
+  });
+
+  const week1 = result.weeks[0];
+  assert.equal(week1.workingDayCount, 6);
+  assert.equal(week1.targetMinutes, 3240); // 6 × 9h
+  assert.equal(week1.status, "short");
+  assert.equal(week1.deficitMinutes, 540); // Saturday missing
+  const satSug = week1.suggestions.find((s) => s.day === "Sat");
+  assert.ok(satSug, "expected a Saturday suggestion");
+  assert.equal(satSug.actionType, "wfh-leave-atr");
+
+  console.log("✅ Saturday month-analysis tests passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Enhanced computeAttendanceSummary Tests
 // ═══════════════════════════════════════════════════════════════════
 
