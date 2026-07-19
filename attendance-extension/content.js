@@ -53,6 +53,9 @@
     "week off", "weekoff", "week_off", "weekly off"
   ];
 
+  const LEAP_LOGIN_IDS = ["leap login"];
+  const BIO_LOGIN_IDS = ["bio login"];
+
   const Logic = globalThis.AttendanceLogic;
   if (!Logic) {
     throw new Error("Attendance calculation helpers were not loaded.");
@@ -261,7 +264,9 @@
 
   function extractAttendance() {
     // Generate this week's valid work dates (filtered by current month)
-    const weekContext = Logic.buildWeekContext({ policy: WORK_POLICY });
+    const department = extractDepartment();
+    const effectivePolicy = Logic.augmentPolicyForDepartment(WORK_POLICY, department);
+    const weekContext = Logic.buildWeekContext({ policy: effectivePolicy });
     const {
       weekDates,
       validDates,
@@ -275,9 +280,6 @@
 
     // Extract today's login time from the page header
     const todayLogin = extractTodayLogin();
-
-    // Extract department from the page controls
-    const department = extractDepartment();
 
     const result = {
       success: false,
@@ -305,7 +307,7 @@
         daysConsidered: validDates.length,
         totalWeekDays: weekDates.length,
         dailyTargetHours: WORK_POLICY.dailyWorkHours,
-        workPolicy: WORK_POLICY,
+        workPolicy: effectivePolicy,
         validDatesList: validDates.map(d => Logic.toISODate(d)),
         refreshDays: Object.keys(validIsoByDay),
         excludedDates,
@@ -337,6 +339,8 @@
     let typeIdx = -1;
     let categoryCodeIdx = -1;
     let weekOffIdx = -1;
+    let leapLoginIdx = -1;
+    let bioLoginIdx = -1;
 
     if (headerCells.length > 0) {
       dateIdx = findColIndex(headerCells, DATE_IDS);
@@ -345,6 +349,8 @@
       typeIdx = findColIndex(headerCells, TYPE_IDS);
       categoryCodeIdx = findColIndex(headerCells, CATEGORY_CODE_IDS);
       weekOffIdx = findColIndex(headerCells, WEEK_OFF_IDS);
+      leapLoginIdx = findColIndex(headerCells, LEAP_LOGIN_IDS);
+      bioLoginIdx = findColIndex(headerCells, BIO_LOGIN_IDS);
     }
 
     console.log(`[HRMS Extractor] Column indices — Date: ${dateIdx}, Day: ${dayIdx}, Final Login: ${finalLoginIdx}, Leaves: ${leavesIdx}, Type: ${typeIdx}, Category Code: ${categoryCodeIdx}, Week Off: ${weekOffIdx}`);
@@ -409,6 +415,10 @@
         ? cells[categoryCodeIdx].textContent.trim() : null;
       const weekOffVal = weekOffIdx !== -1 && cells[weekOffIdx]
         ? cells[weekOffIdx].textContent.trim() : null;
+      const leapLoginVal = leapLoginIdx !== -1 && cells[leapLoginIdx]
+        ? cells[leapLoginIdx].textContent.trim() : null;
+      const bioLoginVal = bioLoginIdx !== -1 && cells[bioLoginIdx]
+        ? cells[bioLoginIdx].textContent.trim() : null;
 
       // Skip completely empty rows (no date, no day, no data at all)
       if (!timeVal && !dateVal && !dayVal && !leavesVal && !categoryCodeVal) continue;
@@ -471,6 +481,10 @@
         leaveType: (typeVal && typeVal.length > 0) ? typeVal : null,
         categoryCode: (categoryCodeVal && categoryCodeVal.length > 0) ? categoryCodeVal : null,
         weekOff: isWeekOff,
+        hasLeap: Logic.hasLoginTime(leapLoginVal),
+        hasBio: Logic.hasLoginTime(bioLoginVal),
+        rawLeapLogin: leapLoginVal || null,
+        rawBioLogin: bioLoginVal || null,
         display: parsedDate ? Logic.formatDateDisplay(parsedDate) : isoDate,
       };
 
@@ -560,7 +574,7 @@
     if (Object.keys(result.allEntries).length > 0) {
       result.monthAnalysis = Logic.computeMonthEndAnalysis({
         allEntries: result.allEntries,
-        policy: WORK_POLICY,
+        policy: effectivePolicy,
         department,
         today: new Date(),
       });
