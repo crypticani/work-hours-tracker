@@ -711,12 +711,12 @@
     const [h, m] = time24.split(":").map(Number);
     if (isNaN(h) || isNaN(m)) return time24;
     
-    const isNextDay = h >= 24;
+    const dayOffset = Math.floor(h / 24);
     const realH = h % 24;
     const period = realH >= 12 ? "PM" : "AM";
     const h12 = realH === 0 ? 12 : realH > 12 ? realH - 12 : realH;
-    
-    return `${h12}:${String(m).padStart(2, "0")} ${period}${isNextDay ? " (+1d)" : ""}`;
+
+    return `${h12}:${String(m).padStart(2, "0")} ${period}${dayOffset > 0 ? ` (+${dayOffset}d)` : ""}`;
   }
 
   function setStatus(type, icon, text) {

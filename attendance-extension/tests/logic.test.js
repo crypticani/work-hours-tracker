@@ -77,10 +77,10 @@ function policy(overrides = {}) {
 
   assert.equal(summary.totalWorked, "08:30");
   assert.equal(summary.required, "45:00");
-  // Cumulative-through-today: only Wed present (Mon/Tue uncredited).
-  // Target through Wed = 3 × 9h = 27h; nothing credited before today → today needs 27h.
-  assert.equal(summary.todayRemainingFormatted, "27:00");
-  assert.equal(summary.logoutTime, "36:30");
+  // Mon/Tue have no row → assumed regularized to full days (9h each);
+  // Wed cumulative target 27h − 18h credited = 9h needed today.
+  assert.equal(summary.todayRemainingFormatted, "09:00");
+  assert.equal(summary.logoutTime, "18:30");
 }
 
 {
@@ -588,6 +588,20 @@ console.log("✅ Existing tests passed");
     department: "Devops",
   });
   assert.equal(noLogin.logoutStatus, "no-login");
+
+  // Leap-only ATR-pending Monday is assumed to become a full day → does NOT
+  // inflate Tuesday's logout (still login + 9h).
+  const atrEntries = {
+    "2026-06-01": { day: "Mon", time: null, hasLeap: true, hasBio: false, leaves: null, categoryCode: null, weekOff: false },
+  };
+  const atrSummary = Logic.computeAttendanceSummary({
+    entries: atrEntries, data: {}, context,
+    todayLogin: { found: true, time24: "09:30", raw: "09:30 AM" },
+    department: "Devops",
+  });
+  assert.equal(atrSummary.logoutStatus, "ok");
+  assert.equal(atrSummary.todayRemainingFormatted, "09:00");
+  assert.equal(atrSummary.logoutTime, "18:30");
 
   console.log("✅ Cumulative logout tests passed");
 }

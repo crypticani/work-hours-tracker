@@ -309,7 +309,7 @@
         dailyTargetHours: WORK_POLICY.dailyWorkHours,
         workPolicy: effectivePolicy,
         validDatesList: validDates.map(d => Logic.toISODate(d)),
-        refreshDays: Object.keys(validIsoByDay),
+        refreshDays: Object.keys(validIsoByDay).filter((d) => d !== "Sat"),
         excludedDates,
         department,
       },

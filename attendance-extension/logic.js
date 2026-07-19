@@ -487,7 +487,10 @@
       return result;
     }
 
-    // 6b. Non-DevOps Saturday with nothing → auto-credit WFH (HR backend)
+    // 6b. Non-DevOps Saturday with nothing → auto-credit WFH (HR backend).
+    // Note: content.js normally injects a "Work From Home" leaves entry for
+    // non-DevOps Saturdays, so those hit branch 2 first; this branch only fires
+    // for a real data-less Saturday row the injection did not cover.
     if (daySaturday && !isDevOpsDepartment(dept)) {
       const lt = parseLeaveType(entry.leaveType, p);
       result.status = "wfh";
@@ -810,12 +813,20 @@
       ).length;
       const targetThroughToday = daysThroughToday * dailyMins;
 
+      // Pending days (unmarked / leap-only ATR / Saturday-pending) and days with
+      // no row yet are assumed to be regularized to a full day, so they do NOT
+      // inflate today's logout. Only genuinely worked (bio) days contribute their
+      // actual hours; a short bio day therefore still creates catch-up.
       let creditedBeforeToday = 0;
       for (const d of context.validDates) {
         const iso = toISODate(d);
         if (iso >= todayIso) continue;
         const cls = dayClassifications[iso];
-        creditedBeforeToday += cls ? cls.totalMinutes : 0;
+        if (cls && cls.status !== "pending") {
+          creditedBeforeToday += cls.totalMinutes;
+        } else {
+          creditedBeforeToday += dailyMins;
+        }
       }
 
       const need = Math.max(0, targetThroughToday - creditedBeforeToday);
