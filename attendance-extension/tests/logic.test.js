@@ -290,6 +290,81 @@ console.log("✅ Existing tests passed");
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// classifyDayStatus — Leap/Bio & action metadata
+// ═══════════════════════════════════════════════════════════════════
+
+{
+  const p = policy();
+
+  // Leap login present, no Bio → WFH not regularized → atr-wfh pending
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Mon", time: null, hasLeap: true, hasBio: false, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "pending");
+    assert.equal(cls.actionNeeded, true);
+    assert.equal(cls.actionType, "atr-wfh");
+    assert.equal(cls.totalMinutes, 0);
+  }
+
+  // Both Leap and Bio + Final Login → worked, no action (guards old false-WFH bug)
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Tue", time: "09:07", hasLeap: true, hasBio: true, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "worked");
+    assert.equal(cls.actionNeeded, false);
+    assert.equal(cls.actionType, null);
+  }
+
+  // Category code (C0018) on a leap-only day → ATR already applied, no action
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Wed", time: null, hasLeap: true, hasBio: false, leaves: null, leaveType: "Full Day", categoryCode: "C0018", weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "atr");
+    assert.equal(cls.actionNeeded, false);
+    assert.equal(cls.atrMinutes, 540);
+  }
+
+  // Second Half Day ATR → half credit
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Thu", time: null, hasLeap: true, hasBio: false, leaves: null, leaveType: "Second Half Day", categoryCode: "C0018", weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "atr");
+    assert.equal(cls.isFull, false);
+    assert.equal(cls.atrMinutes, 270);
+  }
+
+  // DevOps Saturday, nothing → wfh-leave-atr
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Sat", time: null, hasLeap: false, hasBio: false, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.status, "pending");
+    assert.equal(cls.actionType, "wfh-leave-atr");
+  }
+
+  // Unmarked weekday → leave-atr
+  {
+    const cls = Logic.classifyDayStatus(
+      { day: "Mon", time: null, hasLeap: false, hasBio: false, leaves: null, categoryCode: null, weekOff: false },
+      p, { department: "Devops" }
+    );
+    assert.equal(cls.actionType, "leave-atr");
+    assert.equal(cls.actionNeeded, true);
+  }
+
+  console.log("✅ classifyDayStatus leap/bio tests passed");
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // computeMonthEndAnalysis Tests
 // ═══════════════════════════════════════════════════════════════════
 

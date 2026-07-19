@@ -385,15 +385,11 @@
   /**
    * Classify a single day's attendance status.
    *
-   * Decision order:
-   *   1. Weekend (weekOff) → skip
-   *   2. Saturday department rules
-   *   3. Leaves present → leave/wfh (priority over ATR)
-   *   4. Category Code present → ATR
-   *   5. Final Login present → worked
-   *   6. Nothing → pending
+   * Priority: weekOff → leaves → categoryCode → worked(FinalLogin)
+   *   → leap-only(atr-wfh) → DevOps Saturday(wfh-leave-atr)
+   *   → non-DevOps Saturday(auto-WFH) → unmarked(leave-atr)
    *
-   * @param {Object} entry   - enriched entry from content.js
+   * @param {Object} entry   - enriched entry (may include hasLeap/hasBio)
    * @param {Object} policy  - work policy
    * @param {Object} options - { department: string }
    * @returns {Object} classification result
@@ -410,10 +406,17 @@
       leaveMinutes: 0,
       atrMinutes: 0,
       totalMinutes: 0,
+      actionNeeded: false,
+      actionType: null,
       label: "Pending",
     };
 
-    if (!entry) return result;
+    if (!entry) {
+      result.actionNeeded = true;
+      result.actionType = "leave-atr";
+      result.label = "Apply Leave/ATR";
+      return result;
+    }
 
     // 1. Weekend
     if (entry.weekOff) {
@@ -422,34 +425,15 @@
       return result;
     }
 
-    // Determine if this is a Saturday
     const daySaturday = entry.day === "Sat" ||
       (typeof entry.day === "string" && entry.day.toLowerCase().startsWith("sat"));
-
-    // Calculate worked minutes from Final Login if present
     const workedMins = entry.time ? timeToMinutes(entry.time) : 0;
+    const hasLeap = !!entry.hasLeap;
+    const hasBio = !!entry.hasBio;
 
-    // 2. Saturday department rules
-    if (daySaturday) {
-      if (!isDevOpsDepartment(dept)) {
-        // Non-DevOps: ALL Saturdays auto-credit WFH
-        const lt = parseLeaveType(entry.leaveType, p);
-        result.status = "wfh";
-        result.isFull = lt.isFull;
-        result.leaveMinutes = lt.minutes;
-        result.workedMinutes = workedMins;
-        result.totalMinutes = workedMins + lt.minutes;
-        result.label = `WFH (${lt.isFull ? "Full Day" : "Half Day"})`;
-        return result;
-      }
-      // DevOps: need explicit WFH / Leave in HRMS
-      // (falls through to normal leave/ATR/pending logic below)
-    }
-
-    // 3. Leaves present (takes priority over ATR)
+    // 2. Leaves present (applied leave / WFH) — takes priority over ATR
     if (entry.leaves && typeof entry.leaves === "string" && entry.leaves.trim()) {
       const lt = parseLeaveType(entry.leaveType, p);
-
       if (isWFH(entry.leaves)) {
         result.status = "wfh";
         result.label = `WFH (${lt.isFull ? "Full Day" : "Half Day"})`;
@@ -457,7 +441,6 @@
         result.status = "leave";
         result.label = `Leave (${lt.isFull ? "Full Day" : "Half Day"})`;
       }
-
       result.isFull = lt.isFull;
       result.leaveMinutes = lt.minutes;
       result.workedMinutes = workedMins;
@@ -465,10 +448,9 @@
       return result;
     }
 
-    // 4. Category Code present (ATR), only when no leave
+    // 3. Category Code present → ATR already applied
     if (entry.categoryCode && typeof entry.categoryCode === "string" && entry.categoryCode.trim()) {
       const lt = parseLeaveType(entry.leaveType, p);
-
       result.status = "atr";
       result.isFull = lt.isFull;
       result.atrMinutes = lt.minutes;
@@ -478,8 +460,8 @@
       return result;
     }
 
-    // 5. Final Login has valid time → worked
-    if (entry.time && workedMins > 0) {
+    // 4. Final Login has valid worked time → worked, no action
+    if (workedMins > 0) {
       result.status = "worked";
       result.workedMinutes = workedMins;
       result.totalMinutes = workedMins;
@@ -487,9 +469,40 @@
       return result;
     }
 
-    // 6. Nothing present → pending Leave/ATR
+    // 5. Leap login present but no Bio login → WFH, ATR not yet filed
+    if (hasLeap && !hasBio) {
+      result.status = "pending";
+      result.actionNeeded = true;
+      result.actionType = "atr-wfh";
+      result.label = "WFH — file ATR";
+      return result;
+    }
+
+    // 6. DevOps Saturday with nothing → apply WFH Leave/ATR
+    if (daySaturday && isDevOpsDepartment(dept)) {
+      result.status = "pending";
+      result.actionNeeded = true;
+      result.actionType = "wfh-leave-atr";
+      result.label = "Saturday — apply WFH Leave/ATR";
+      return result;
+    }
+
+    // 6b. Non-DevOps Saturday with nothing → auto-credit WFH (HR backend)
+    if (daySaturday && !isDevOpsDepartment(dept)) {
+      const lt = parseLeaveType(entry.leaveType, p);
+      result.status = "wfh";
+      result.isFull = lt.isFull;
+      result.leaveMinutes = lt.minutes;
+      result.totalMinutes = lt.minutes;
+      result.label = `WFH (${lt.isFull ? "Full Day" : "Half Day"})`;
+      return result;
+    }
+
+    // 7. Nothing present → unmarked, apply Leave/ATR
     result.status = "pending";
-    result.label = "Pending Leave/ATR";
+    result.actionNeeded = true;
+    result.actionType = "leave-atr";
+    result.label = "Apply Leave/ATR";
     return result;
   }
 
